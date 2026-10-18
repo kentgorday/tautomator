@@ -190,7 +190,7 @@ def isolated_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 class TestScratchCleanup:
     """Psi4 scratch must not leak.
 
-    Orphaned scratch is what filled the disk during the first training-set
+    Orphaned scratch is what filled the disk during the first pKa-set
     run: on the out-of-core DFJK path a single job writes several GB of
     three-index integrals, and nothing ever deleted the directories.
     """

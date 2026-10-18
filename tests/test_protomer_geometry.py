@@ -1202,7 +1202,7 @@ class TestAnUndiscriminatedTie:
 
         Handing the enol hydroxyl's proton to the carboxylate oxygen at the same
         end gives hydrogen vector (0, 0, 1, 1, 0, 1, 0) -- the vector carried by
-        one of the two conformers the first training batch excluded as ambiguous
+        one of the two conformers the first pKa-set batch excluded as ambiguous
         at q=-1. The identity is no longer valid, the automorphism search runs,
         and both candidates stay satisfiable.
         """

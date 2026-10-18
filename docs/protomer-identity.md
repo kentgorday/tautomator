@@ -125,7 +125,7 @@ just the element sequence -- two different orderings can share one sequence.
 The key above identifies a species from a SMILES. `tautomator/protomer_geometry.py`
 identifies one from *coordinates*, which is what catches a conformer whose proton
 migrated between heavy atoms while xTB or DFT was minimising it. It is not rare:
-across the first training batch about a quarter of conformers at both stages were
+across the first pKa-set batch about a quarter of conformers at both stages were
 filed under a protomer their geometry no longer matched, and nothing detected it.
 A protonated carboxylic acid handing its proton to a free amine is the typical
 case, and the resulting ammonium/acid form is the obviously correct structure --
@@ -209,7 +209,7 @@ a new microstate instead.
 
 **An ambiguous destination.** The geometry became one of several microstates,
 none of them the one it was filed under, and nothing separates them. Rare enough
-that nothing in the first training batch reached it.
+that nothing in the first pKa-set batch reached it.
 
 A tie that *includes* the microstate the conformer already sits in is not an
 exclusion: it is a failure to discriminate rather than evidence of a change, so
@@ -331,7 +331,7 @@ automorphisms against a cap of 64, so relying on it being among them rests on
 RDKit's match ordering rather than on anything guaranteed. And the cap warning is
 emitted before we know whether any automorphism matters, so a clean run would
 print an alarming line about orderings that were never needed. Over the whole
-first training batch -- 742 stored conformers -- `GetSubstructMatches` is now
+first pKa-set batch -- 742 stored conformers -- `GetSubstructMatches` is now
 called zero times.
 
 This is *not* the `same_microstate` shortcut removed earlier. That one keyed on
@@ -442,7 +442,7 @@ carries hand-assigned stereochemistry.
 **E/Z isomerism in the CREST-first path.** Approach 2 identifies microstates by
 a geometric fingerprint, which cannot carry double-bond configuration without
 knowing that a bond is rigid, and rigidity is not recoverable from coordinates
-alone. Measured on the first training batch: among planar sp2-sp2 C-C bonds,
+alone. Measured on the first pKa-set batch: among planar sp2-sp2 C-C bonds,
 103 of 610 visit both sides of the torsion *within one microstate* -- they are
 rotatable by construction -- and no bond-length threshold separates those from
 the rigid ones without either merging distinct species or splitting a third of

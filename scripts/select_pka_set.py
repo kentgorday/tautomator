@@ -1,14 +1,15 @@
 #!/usr/bin/env python
-"""Select a diverse training set from the IUPAC Dissociation-Constants dataset.
+"""Select a diverse pKa set from the IUPAC Dissociation-Constants dataset.
 
 Applies a series of filters and diversity criteria to produce a compact set of
-small organic molecules with experimental aqueous pKa values suitable for
-fitting LFER coefficients.
+small organic molecules with experimental aqueous pKa values, for evaluating
+predicted pKas.  Nothing is fitted to it, so the size limits are there only to
+keep the runs affordable.
 
 Usage:
-    pixi run python scripts/select_training_set.py \
+    pixi run python scripts/select_pka_set.py \
         --input ~/Dissociation-Constants/iupac_high-confidence_v2_3.csv \
-        --output training_set.csv \
+        --output pka_set.csv \
         --max-heavy-atoms 10 \
         --max-rotatable-bonds 2 \
         --max-dissociations 2 \
@@ -364,7 +365,7 @@ def select_diverse_subset(
 
 def print_summary(df: pd.DataFrame) -> None:
     print(f"\n{'=' * 60}")
-    print(f"Training set: {len(df)} molecules")
+    print(f"pKa set: {len(df)} molecules")
     print(f"{'=' * 60}")
     n_acids = (df["acid_base"] == "acid").sum()
     n_bases = (df["acid_base"] == "base").sum()
@@ -489,14 +490,14 @@ def draw_grid(df: pd.DataFrame, output_path: Path, cols_per_row: int = 5) -> Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Select pKa training set from IUPAC dataset")
+    parser = argparse.ArgumentParser(description="Select the pKa set from the IUPAC dataset")
     parser.add_argument(
         "--input",
         type=Path,
         default=Path.home() / "Dissociation-Constants" / "iupac_high-confidence_v2_3.csv",
         help="Path to IUPAC CSV",
     )
-    parser.add_argument("--output", type=Path, default=Path("training_set.csv"))
+    parser.add_argument("--output", type=Path, default=Path("pka_set.csv"))
     parser.add_argument("--max-heavy-atoms", type=int, default=10)
     parser.add_argument(
         "--max-rotatable-bonds",

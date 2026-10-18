@@ -70,7 +70,7 @@ and multi-component inputs are rejected at entry rather than approximated.
 
 The same identity is read back off the geometry after sampling and after
 refinement, because protons migrate between heavy atoms during minimisation —
-often enough that about a quarter of conformers in the first training batch were
+often enough that about a quarter of conformers in the first pKa-set batch were
 filed under a protomer they no longer matched. Those are re-filed under the
 microstate they became, before deduplication, so they collapse against it rather
 than buying a Hessian twice; a conformer that fragmented or became a species no
@@ -199,7 +199,7 @@ score. All three drivers implement the same three operations (`single_point`,
   (`[refinement] method = "OrbMol-v2"`); `compute.driver` stays psi4 or pyscf
   and still runs the solvation single point and scoring. There is no basis. It
   has **no implicit solvent**, so `solvation = "optimize"` is refused. Measured
-  against wB97M-V (807 training-set structures; 29 geometry pairs):
+  against wB97M-V (807 structures from pKa-set runs; 29 geometry pairs):
   conformer/tautomer energies within a charge state MAE 0.11 kcal/mol
   (wB97X-3c: 0.31), gas-phase deprotonation energies MAE 0.14 kcal/mol vs
   def2-TZVPD, and its minima are lower in wB97M-V energy than wB97X-3c's in
@@ -242,10 +242,10 @@ analytical PCM model; see [docs/nonelectrostatic.md](docs/nonelectrostatic.md)).
 | refinement solvation | minimized in IEF-PCM | wB97X-3c/vDZP single point |
 | refinement `ewin` | 8 | 6 |
 | scoring | wB97M-V/def2-QZVPPD | wB97M-V/def2-TZVPPD |
-| cost (40-molecule training set) | ~74 d | ~15–21 d |
+| cost (40-molecule pKa set) | ~74 d | ~15–21 d |
 
 `fast` agrees with `high_quality` to ~0.05 pKa at the scoring level and ≤0.01
-pKa on the refinement window, on training-set molecules. That comparison, the
+pKa on the refinement window, on pKa-set molecules. That comparison, the
 costs above and both refinement windows date from when `high_quality` refined
 on gas-phase geometries (Psi4, with a solvated single point); they have not
 been re-measured with solvated minimization. The basis step
@@ -324,7 +324,7 @@ output_dir/
 Example configs in `examples/` cover both DFT backends, OrbMol-v2 refinement,
 and both sampling approaches; each TOML is annotated.
 
-For batch runs over a CSV of SMILES, see `scripts/run_training_set.py`
+For batch runs over a CSV of SMILES, see `scripts/run_pka_set.py`
 (`--protocol`, `--driver`, `--resume`).
 
 ## Repo layout
@@ -358,10 +358,12 @@ Source under `tautomator/`. One-liner per module:
 Scripts (`scripts/`):
 
 - `run_pipeline.py` — single molecule.
-- `run_training_set.py` — batch over a CSV with per-molecule subdirectories
+- `run_pka_set.py` — batch over a CSV with per-molecule subdirectories
   and resume support.
-- `select_training_set.py` — diversity-based curation from the IUPAC
-  Dissociation-Constants dataset.
+- `select_pka_set.py` — the pKa evaluation set: diversity-based curation from
+  the IUPAC Dissociation-Constants dataset. Nothing is fitted to it.
+- `report_pka_set.py` — predicted against experimental pKa for a run over that
+  set, with the transitions whose ion is also in the MNSol set reported apart.
 - `select_mnsol_set.py` — MNSol solutes and reference free energies in water,
   water-saturated 1-octanol and n-hexadecane, for fitting the nonelectrostatic
   correction. Neither MNSol nor its output (`mnsol_set.csv`) is tracked, as
@@ -493,7 +495,7 @@ The set of things that look weird and aren't. Read before "fixing":
   has no gradients (Psi4 then takes finite differences of energies), and its
   GePol cavities failed its own validity checks — Gauss' theorem on the nuclear
   surface charge, positive-definiteness of the single-layer operator — on 324 of
-  941 conformers of the first training batch. Those checks are patched to
+  941 conformers of the first pKa-set batch. Those checks are patched to
   warnings in the build used here, so Psi4 exited 0 with meaningless energies
   (one off by 22,000 kcal/mol), and keeping them out took a cavity probe and a
   tessera-area search before every job. psi4-swig-pcm uses PySCF's smooth
@@ -574,8 +576,9 @@ Next, in order:
    103 of them ions; `scripts/select_mnsol_set.py`) in water, water-saturated
    1-octanol (`woctanol`) and hexadecane, and in the gas phase.
 3. **Fit the non-electrostatic correction** on that set.
-4. **Rerun the pKa training and evaluation set** with IEF-PCM plus the
-   correction, and see whether any pKa-specific fitting is still needed.
+4. **Evaluate pKa** on the IUPAC set with IEF-PCM plus the correction.
+   Nothing is fitted to it. Transitions whose ion is also in MNSol are scored
+   apart: MNSol derived those ions' solvation energies from their pKas.
 5. **OrbMol-v2 with ALPB in refinement.** In the gas phase OrbMol turns
    zwitterions back into neutral forms. With an implicit solvent acting on its
    latent charges, its minima land within 0.06 Å of DFT+PCM on the molecules
@@ -591,17 +594,15 @@ What's implemented:
 - Energy decomposition, quasi-RRHO with frequency scaling, sigma_rot
   detection, enantiomer multiplicity.
 - Batch runner with per-molecule failure isolation and resume.
-- Training-set selection from IUPAC dissociation constants.
+- pKa evaluation-set selection from IUPAC dissociation constants.
 - The nonelectrostatic correction's integrals (unfitted, energy only, PySCF
   only), saved per conformer at scoring, and the MNSol fitting-set selection.
 
 What's not yet here:
 
-- **No pKa-from-ensemble step.** The pipeline produces ensembles and
-  Boltzmann-weighted free energies; the LFER fit / macroscopic pKa formula
-  is not committed.
-- Training-set batch outputs are not committed beyond a few sample runs in
-  `smoke/` and `train_set/`.
+- **No pKa step in the pipeline.** It stops at ensembles and
+  Boltzmann-weighted free energies. pKas come from the direct cycle in
+  `scripts/report_pka_set.py`, with the proton's free energy fixed, not fitted.
 
 ## License
 

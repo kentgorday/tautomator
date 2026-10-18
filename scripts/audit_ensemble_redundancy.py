@@ -25,7 +25,7 @@ from tautomator.ensemble import load_ensemble
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output-root", default="training_set_output")
+    ap.add_argument("--output-root", default="pka_set_output")
     ap.add_argument("--stage", default="final", choices=["sampling", "refinement", "final"])
     ap.add_argument("--rthr", type=float, default=DEFAULT_RTHR)
     args = ap.parse_args()

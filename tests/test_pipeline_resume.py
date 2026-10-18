@@ -60,7 +60,7 @@ class TestFindResumePoint:
     def test_smiles_mismatch_is_refused(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # Output dirs are numbered by CSV row; editing the training set shifts
+        # Output dirs are numbered by CSV row; editing the pKa set shifts
         # them, so a checkpoint can belong to a different molecule entirely.
         serialize_ensemble(_ensemble("CCO"), tmp_path / "refinement")
         assert _find_resume_point(tmp_path, "CCN") is None

@@ -50,7 +50,7 @@ class TestDissociationIsCaughtBeforeTheConformerSearch:
 
     Its iMTD-GC calibrates with a trial metadynamics that diverges on a loose
     fragment: it halves the time step four times, disables SHAKE, then exits
-    non-zero. On molecule 4 of the training set this cost eight searches -- four
+    non-zero. On molecule 4 of the pKa set this cost eight searches -- four
     at ~4 s where a proton had left outright, four at 17-33 min where a fluoride
     still weakly interacting at 2.7-4.9 A let the trial calibrate and the full
     70 ps run before failing downstream.

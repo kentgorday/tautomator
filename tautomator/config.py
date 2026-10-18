@@ -388,7 +388,7 @@ class PkaConfig:
 # Recommended protocols
 # ---------------------------------------------------------------------------
 # Defaults only: any key written in the file wins.  "fast" is ~5x cheaper than
-# "high_quality" and, measured against it on training-set molecules, agrees to
+# "high_quality" and, measured against it on pKa-set molecules, agrees to
 # ~0.05 pKa at the scoring level and <=0.01 pKa on the refinement window.  Those
 # figures, and both refinement windows, date from when "high_quality" refined
 # on gas-phase geometries (Psi4, with a solvated single point); they have not

@@ -410,7 +410,7 @@ def _scratch_dir() -> tempfile.TemporaryDirectory[str]:
     """Scratch directory for one Psi4 job, cleaned up on ``with`` exit.
 
     Every caller runs Psi4 inside one of these.  Leaking them is what filled
-    the disk during the first training-set run: on the out-of-core DFJK path
+    the disk during the first pKa-set run: on the out-of-core DFJK path
     a single job writes several GB of three-index integrals, and nothing
     deleted the directories afterwards.
 

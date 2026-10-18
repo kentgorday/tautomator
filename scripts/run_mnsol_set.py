@@ -63,10 +63,10 @@ import sys
 import traceback
 from pathlib import Path
 
+from tautomator.batch import compound_dir_name
 from tautomator.config import DEFAULT_MEMORY_GB, PROTOCOLS, load_config
 from tautomator.nonelectrostatic import DESCRIPTOR_FILE
 from tautomator.pipeline import run_pipeline
-from tautomator.training_set import compound_dir_name
 
 # Medium -> the reference columns that need a run in it.
 MEDIA: dict[str, tuple[str, ...]] = {

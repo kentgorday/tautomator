@@ -261,7 +261,7 @@ Scaling the tolerances with `rthr * sqrt(N)` would close the gap and is not
 viable: the backtracking search depends on tight distance pruning, and at 254
 atoms the scaled tolerance takes the search from 0.02 s to over two minutes
 without changing a single grouping on real data. 0.8 A was chosen as the widest
-value that stays flat in cost (2.5x over the whole training set, unchanged
+value that stays flat in cost (2.5x over the whole pKa set, unchanged
 results) while comfortably covering the displacements optimization actually
 produces.
 

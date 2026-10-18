@@ -9,14 +9,14 @@ come mostly from logP, so they belong to water-saturated octanol and are run in
 tautomator's "woctanol" (docs/nonelectrostatic.md).
 
 A solute is kept if it has at most 10 heavy atoms and at most 2 rotatable bonds,
-the training set's limits, so that its conformer ensemble stays small; and if
+the pKa set's limits, so that its conformer ensemble stays small; and if
 the pipeline accepts it (``rdkit_utils.validate_input_smiles``): closed-shell, a
 single component, and at least one heavy atom.  That drops the ion-water
 clusters, the water dimer and H2.  Ionizable sites are not limited, since
 MNSol fixes each solute's charge state, and carbon-free solutes stay: they carry
 the strongest surface fields.
 
-The output follows the training-set CSV (``unique_ID`` and ``SMILES``), with the
+The output follows the pKa set's CSV (``unique_ID`` and ``SMILES``), with the
 molecular ``charge`` to run at: each solute is one species, so a run's charge
 range is ``charge`` to ``charge``.  SMILES come from the database geometries
 (``tautomator.mnsol``) and carry their stereochemistry.  Solutes the database

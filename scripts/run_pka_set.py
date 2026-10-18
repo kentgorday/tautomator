@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the pKa pipeline over every SMILES in a training-set CSV.
+"""Run the pKa pipeline over every SMILES in the pKa set's CSV.
 
 Builds a per-molecule TOML config, runs the three-stage pipeline, and writes
 each molecule's outputs (sampling/, refinement/, ensemble.json) into its own
@@ -9,13 +9,13 @@ Per-molecule failures are caught and logged so a single bad compound does
 not abort the whole batch.
 
 Usage:
-    pixi run python scripts/run_training_set.py \
-        --training-set training_set.csv \
-        --output-root training_set_output \
+    pixi run python scripts/run_pka_set.py \
+        --pka-set pka_set.csv \
+        --output-root pka_set_output \
         --driver pyscf --threads 8 --protocol high_quality
 
 Resume after interruption:
-    pixi run python scripts/run_training_set.py --resume ...
+    pixi run python scripts/run_pka_set.py --resume ...
 
 Each subdirectory is named for the molecule's unique_ID, so --resume finds a
 molecule's earlier output wherever its row now sits in the CSV -- including
@@ -37,9 +37,9 @@ import sys
 import traceback
 from pathlib import Path
 
+from tautomator.batch import compound_dir_name, find_compound_dir
 from tautomator.config import DEFAULT_MEMORY_GB, PROTOCOLS, load_config
 from tautomator.pipeline import run_pipeline
-from tautomator.training_set import compound_dir_name, find_compound_dir
 
 
 def make_toml(
@@ -81,11 +81,11 @@ output_dir = "{output_dir}"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run pKa pipeline over a training-set CSV")
+    parser = argparse.ArgumentParser(description="Run the pKa pipeline over the pKa set's CSV")
     parser.add_argument(
-        "--training-set",
+        "--pka-set",
         type=Path,
-        default=Path("training_set.csv"),
+        default=Path("pka_set.csv"),
         help=(
             "CSV with at least a SMILES column. Output directories are named for "
             "the unique_ID column; without one, for the row number (mol_N)"
@@ -94,7 +94,7 @@ def main() -> None:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("training_set_output"),
+        default=Path("pka_set_output"),
     )
     parser.add_argument("--driver", default="pyscf", choices=["pyscf", "psi4"])
     parser.add_argument(
@@ -144,9 +144,9 @@ def main() -> None:
     )
     log = logging.getLogger(__name__)
 
-    if not args.training_set.exists():
+    if not args.pka_set.exists():
         print(
-            f"Error: {args.training_set} not found. Run scripts/select_training_set.py first.",
+            f"Error: {args.pka_set} not found. Run scripts/select_pka_set.py first.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -154,7 +154,7 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, str]] = []
-    with args.training_set.open() as f:
+    with args.pka_set.open() as f:
         reader = csv.DictReader(f)
         for row in reader:
             if row.get("SMILES"):

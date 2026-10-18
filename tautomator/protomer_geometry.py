@@ -3,7 +3,7 @@
 `rdkit_utils.protomer_key` answers "which species is this?" from a SMILES.
 This module answers it from coordinates, so that a conformer whose proton moved
 during minimisation can be recognised and re-filed under the species it actually
-became.  Migration is not rare: across the first training batch, 20 of 380
+became.  Migration is not rare: across the first pKa-set batch, 20 of 380
 microstates changed protonation between xTB sampling and DFT refinement, and
 nothing detected it.
 

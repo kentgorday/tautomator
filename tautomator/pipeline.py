@@ -36,7 +36,7 @@ def _find_resume_point(output_dir: Path, smiles: str) -> tuple[Ensemble, str] | 
     [refinement], or after one of its defaults changed, silently mixes levels of
     theory.
     The SMILES check still catches the dangerous case: output directories are
-    numbered by CSV row, so editing the training set shifts them and would
+    numbered by CSV row, so editing the pKa set shifts them and would
     otherwise resume one molecule's run against another's data.
     """
     for stage in _RESUMABLE_STAGES:

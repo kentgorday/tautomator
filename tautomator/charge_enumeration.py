@@ -191,7 +191,7 @@ def charge_separated_variants(smiles: str) -> list[str]:
     a relaxed protomer is either re-filed onto the species it became or excluded
     as ``no_matching_microstate``; it cannot reach a result wearing the wrong
     label. The cost is the sampling spent finding that out -- across the pKa
-    training set this takes microstates at the reference charge from 81 to 171.
+    set this takes microstates at the reference charge from 81 to 171.
     """
     charge = get_formal_charge(smiles)
     seen: set[str] = set()
