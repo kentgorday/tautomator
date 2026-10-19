@@ -75,6 +75,10 @@ geometric = ">=1.0"
 pytorch = ">=2.8"
 dm-tree = ">=0.1.8"
 ase = ">=3.25,<4"
+# numba compiles the nonelectrostatic correction's pair loops (the dispersion
+# kernel over cavity points x surface elements, and its derivatives); written
+# with numpy temporaries, the kernel alone cost more than a vDZP SCF.
+numba = ">=0.68"
 
 [target.osx-arm64.dependencies]
 # BLAS/LAPACK from Apple's Accelerate instead of conda-forge's default OpenBLAS.

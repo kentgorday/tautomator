@@ -62,12 +62,18 @@ class TestElectricField:
 
 class TestSoluteFromMf:
     def test_density_integrates_to_the_electron_count(self, formate: tuple[Any, Solute]) -> None:
-        mf, solute = formate
+        """The inside and outside grids together cover all of space.
+
+        On grids finer than the defaults: 12 radial nodes inside do not resolve the
+        bare density's nuclear cusps, which the dispersion integrand does not have.
+        """
+        mf, _solute = formate
+        solute = solute_from_mf(mf, inside_grid=(41, 40), outside_grid=(41, 40))
         inside = solute.interior.weights @ solute.interior.rho
-        # The radial rule inside is not built for nuclear cusps (the dispersion
-        # integrand has none), which limits the bare density to about 1e-4.
+        # The two regions' rules do not share the surface, so their errors do
+        # not cancel: about 5e-4 electrons here.
         assert inside + nonelectrostatic.electrons_outside(solute.exterior) == pytest.approx(
-            mf.mol.nelectron, abs=5e-4
+            mf.mol.nelectron, abs=1.5e-3
         )
 
     def test_surface_elements_lie_on_their_spheres(self, formate: tuple[Any, Solute]) -> None:
@@ -122,10 +128,11 @@ class TestSoluteFromMf:
         mf, solute = formate
         d = nonelectrostatic.descriptors(solute, WATER)
         fine = nonelectrostatic.descriptors(
-            solute_from_mf(mf, lebedev_order=59, n_radial=60), WATER
+            solute_from_mf(mf, inside_grid=(59, 40), outside_grid=(59, 40)), WATER
         )
-        assert d.dispersion == pytest.approx(fine.dispersion, rel=1e-3)
-        assert d.exchange == pytest.approx(fine.exchange, rel=1e-3)
+        # The default grids aim at ~0.01-0.03 kcal/mol on terms of a few kcal/mol: a few 1e-3.
+        assert d.dispersion == pytest.approx(fine.dispersion, rel=3e-3)
+        assert d.exchange == pytest.approx(fine.exchange, rel=5e-3)
 
     def test_refuses_a_mean_field_without_pcm_charges(self) -> None:
         geom = Geometry(symbols=("He",), coords=np.zeros((1, 3)))

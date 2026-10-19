@@ -87,21 +87,14 @@ class TestKernelIntegrals:
         ) + nonelectrostatic.exterior_kernel_integral(points, surface, DELTA)
         assert total == pytest.approx(2.0 * np.pi**2 / (3.0 * DELTA**3), rel=1e-12)
 
-    def test_blocks_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        points = np.random.default_rng(0).normal(size=(37, 3))
-        whole = nonelectrostatic.interior_kernel_integral(points, _sphere(), DELTA)
-        monkeypatch.setattr(nonelectrostatic, "_BLOCK_PAIRS", 5 * len(_sphere().areas))
-        assert nonelectrostatic.interior_kernel_integral(
-            points, _sphere(), DELTA
-        ) == pytest.approx(whole, rel=1e-13)
-
 
 class TestDensityIntegrals:
     def test_exchange_is_density_gradient_outside(self) -> None:
         # int_{r > a} 2 exp(-2r)/pi dV = exp(-2a) (4a^2 + 4a + 2)
         exterior = _hydrogenic(*_radial_grid(RADIUS, 40.0, n_radial=200))
         expected = np.exp(-2.0 * RADIUS) * (4.0 * RADIUS**2 + 4.0 * RADIUS + 2.0)
-        assert nonelectrostatic.exchange_integral(exterior) == pytest.approx(expected, rel=1e-10)
+        # The regularized |grad rho| falls short where it drops below GRAD_FLOOR.
+        assert nonelectrostatic.exchange_integral(exterior) == pytest.approx(expected, rel=1e-9)
 
     def test_electrons_outside(self) -> None:
         exterior = _hydrogenic(*_radial_grid(RADIUS, 40.0, n_radial=200))
@@ -296,3 +289,62 @@ class TestSavedDescriptors:
         assert _scored(3, 5, seed=4, rrho_correction=None).free_energy == pytest.approx(
             c.electronic_energy + c.solvation_energy
         )
+
+
+class TestIntegrandDerivatives:
+    """The integrands' derivatives, which the potential and the gradient are built from."""
+
+    def test_dispersion_density(self) -> None:
+        rng = np.random.default_rng(5)
+        rho = 10.0 ** rng.uniform(-6, 1, size=50)
+        grad_sq = (rng.uniform(0.2, 3.0, size=50) * rho) ** 2
+        value, d_rho, d_grad_sq = nonelectrostatic.dispersion_density(rho, grad_sq, 0.05)
+        h = 1e-6
+        for x, dx in ((rho, d_rho), (grad_sq, d_grad_sq)):
+            up = x * (1 + h)
+            down = x * (1 - h)
+            args_up = (up, grad_sq) if x is rho else (rho, up)
+            args_down = (down, grad_sq) if x is rho else (rho, down)
+            numeric = (
+                nonelectrostatic.dispersion_density(*args_up, 0.05)[0]
+                - nonelectrostatic.dispersion_density(*args_down, 0.05)[0]
+            ) / (2 * h * x)
+            # finite differences lose ~1e-6 to rounding where the factor saturates
+            assert dx == pytest.approx(numeric, rel=2e-5, abs=1e-12)
+        assert value == pytest.approx(
+            rho
+            / (
+                np.sqrt(rho + 3 * 0.0093 / (4 * np.pi) * grad_sq**2 / rho**4)
+                * (np.sqrt(rho + 3 * 0.0093 / (4 * np.pi) * grad_sq**2 / rho**4) + np.sqrt(0.05))
+            ),
+            rel=1e-14,
+        )
+
+    def test_exchange_density_is_smooth_through_zero(self) -> None:
+        grad_sq = np.array([0.0, 1e-40, 1e-12, 1e-4])
+        value, d = nonelectrostatic.exchange_density(grad_sq)
+        assert np.all(np.isfinite(d))
+        assert value[-1] == pytest.approx(1e-2, rel=1e-20 + 1e-15)
+        h = 1e-8
+        numeric = (
+            nonelectrostatic.exchange_density(grad_sq[-1:] * (1 + h))[0]
+            - nonelectrostatic.exchange_density(grad_sq[-1:] * (1 - h))[0]
+        ) / (2 * h * grad_sq[-1])
+        assert d[-1] == pytest.approx(numeric[0], rel=1e-6)
+
+    @pytest.mark.parametrize("exponent", [0.7, 1.0, 3.2])
+    def test_field_power(self, exponent: float) -> None:
+        field = np.array([-0.08, -1e-3, 2e-9, 0.05, 0.0])
+        for sign in (-1, 1):
+            value, d = nonelectrostatic.field_power(field, exponent, sign)
+            h = 1e-7
+            numeric = (
+                nonelectrostatic.field_power(field + h, exponent, sign)[0]
+                - nonelectrostatic.field_power(field - h, exponent, sign)[0]
+            ) / (2 * h)
+            far = np.abs(field) > 1e-6
+            assert d[far] == pytest.approx(numeric[far], rel=1e-5)
+            assert np.all(np.isfinite(d))
+            assert value[far & (field * sign > 0)] == pytest.approx(
+                np.abs(field[far & (field * sign > 0)]) ** exponent, rel=1e-12
+            )

@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from types import ModuleType
 
-from tautomator.cavity_quadrature import LEBEDEV_ORDER, N_RADIAL
+from tautomator.cavity_quadrature import INSIDE_GRID, OUTSIDE_GRID
 from tautomator.config import DEFAULT_MEMORY_GB, solvent_dielectric, solvent_electron_density
 from tautomator.ensemble import filter_charge_state_by_energy
 from tautomator.nonelectrostatic import DELTA, VV_C, ScoredConformer, save_descriptors
@@ -197,8 +197,8 @@ def score(
                 "solvent_rho": solvent_electron_density(solvent),
                 "delta": DELTA,
                 "vv_c": VV_C,
-                "lebedev_order": LEBEDEV_ORDER,
-                "n_radial": N_RADIAL,
+                "inside_grid": list(INSIDE_GRID),
+                "outside_grid": list(OUTSIDE_GRID),
             },
         )
         log.info(f"  Saved descriptors of {len(scored)} conformer(s) to {descriptors_path}")

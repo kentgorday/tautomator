@@ -47,6 +47,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from tautomator.dispersion_kernel import kernel_integral
 from tautomator.types import Geometry
 
 Array = NDArray[np.float64]
@@ -64,9 +65,11 @@ VV_C = 0.0093
 # Densities below this are treated as zero when forming |grad rho| / rho.
 _RHO_FLOOR = 1e-14
 
-# Pair-kernel evaluations per block in the dispersion double sum (~6 temporaries
-# of this many float64 each).
-_BLOCK_PAIRS = 4_000_000
+# The exchange integrand's |grad rho| and the surface term's |F| are taken as
+# x^2 / sqrt(x^2 + floor^2): smooth through x = 0, where the bare magnitude has a
+# kink and its derivative has no limit, and off from |x| by floor^2 / (2|x|).
+GRAD_FLOOR = 1e-14  # e / bohr^4
+FIELD_FLOOR = 1e-8  # a.u.
 
 FieldSource = Literal["field", "charge"]
 
@@ -163,6 +166,59 @@ class Solute:
 
 
 # ---------------------------------------------------------------------------
+# The integrands
+# ---------------------------------------------------------------------------
+
+
+def dispersion_density(
+    rho: Array, grad_sq: Array, solvent_rho: float, vv_c: float = VV_C
+) -> tuple[Array, Array, Array]:
+    """rho / (w (w + sqrt(rho_s))) and its derivatives in rho and |grad rho|^2.
+
+    w = sqrt(rho + (3C/4pi) |grad rho|^4 / rho^4) is the VV local frequency (in
+    units where the plasma term is just rho) and sqrt(rho_s) is the same for a
+    uniform density.  Points with rho at or below _RHO_FLOOR get zeros.
+    """
+    rho = np.asarray(rho, dtype=np.float64)
+    use = rho > _RHO_FLOOR
+    r = np.where(use, rho, 1.0)
+    s = np.where(use, grad_sq, 0.0)
+    c = 3.0 * vv_c / (4.0 * np.pi)
+    q = np.sqrt(solvent_rho)
+    w = np.sqrt(r + c * s**2 / r**4)
+    denom = w * (w + q)
+    value = r / denom
+    d_w = -r * (2.0 * w + q) / denom**2  # d value / d w
+    d_rho = 1.0 / denom + d_w * (1.0 - 4.0 * c * s**2 / r**5) / (2.0 * w)
+    d_grad_sq = d_w * c * s / (r**4 * w)
+    zero = np.zeros_like(rho)
+    return np.where(use, value, zero), np.where(use, d_rho, zero), np.where(use, d_grad_sq, zero)
+
+
+def exchange_density(grad_sq: Array) -> tuple[Array, Array]:
+    """|grad rho| (regularized, see GRAD_FLOOR) and its derivative in |grad rho|^2."""
+    s = np.asarray(grad_sq, dtype=np.float64)
+    shifted = s + GRAD_FLOOR**2
+    root = np.sqrt(shifted)
+    return s / root, (s + 2.0 * GRAD_FLOOR**2) / (2.0 * shifted * root)
+
+
+def field_power(field: Array, exponent: float, sign: Literal[-1, 1]) -> tuple[Array, Array]:
+    """|F|^exponent on the elements whose field has the given sign, 0 on the rest,
+    and its derivative in F; |F| is regularized (see FIELD_FLOOR)."""
+    field = np.asarray(field, dtype=np.float64)
+    shifted = field**2 + FIELD_FLOOR**2
+    root = np.sqrt(shifted)
+    magnitude = field**2 / root
+    d_magnitude = field * (field**2 + 2.0 * FIELD_FLOOR**2) / (shifted * root)
+    mask = field * sign > 0
+    value = np.where(mask, magnitude**exponent, 0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        d = exponent * magnitude ** (exponent - 1.0) * d_magnitude
+    return value, np.where(mask, d, 0.0)
+
+
+# ---------------------------------------------------------------------------
 # The integrals
 # ---------------------------------------------------------------------------
 
@@ -179,18 +235,10 @@ def interior_kernel_integral(points: Array, surface: Surface, delta: float = DEL
 
     g vanishes like R at R = 0, so unlike the usual double-layer kernel this has
     no singularity as r approaches the surface and holds for r inside or outside
-    the cavity alike.  Written with arctan(t)/t it needs no division by R.
+    the cavity alike.  Written with arctan(t)/t it needs no division by R.  The
+    pair sum is compiled (`dispersion_kernel`).
     """
-    out = np.empty(len(points))
-    block = max(1, _BLOCK_PAIRS // len(surface.areas))
-    for p0 in range(0, len(points), block):
-        sep = surface.coords[None, :, :] - points[p0 : p0 + block, None, :]
-        t = (np.sum(sep**2, axis=2) ** 1.5) / delta**3
-        small = t < 1e-8
-        atan_over_t = np.where(small, 1.0, np.arctan(t) / np.where(small, 1.0, t))
-        r_dot_n = np.einsum("pix,ix->pi", sep, surface.normals)
-        out[p0 : p0 + block] = (r_dot_n * atan_over_t) @ surface.areas / (3.0 * delta**6)
-    return out
+    return kernel_integral(points, surface.coords, surface.normals, surface.areas, delta)
 
 
 def exterior_kernel_integral(points: Array, surface: Surface, delta: float = DELTA) -> Array:
@@ -219,18 +267,18 @@ def dispersion_integral(
     the integrand.  ``solvent_rho`` is the liquid's mean electron density in
     e / bohr^3 (`config.solvent_electron_density`).
     """
-    use = interior.rho > _RHO_FLOOR
-    rho = interior.rho[use]
-    grad_sq = np.sum(interior.grad[use] ** 2, axis=1)
-    w = np.sqrt(rho + 3.0 * vv_c / (4.0 * np.pi) * grad_sq**2 / rho**4)
-    kernel = exterior_kernel_integral(interior.coords[use], surface, delta)
-    integrand = rho * kernel / (w * (w + np.sqrt(solvent_rho)))
-    return float(interior.weights[use] @ integrand)
+    factor, _, _ = dispersion_density(
+        interior.rho, np.sum(interior.grad**2, axis=1), solvent_rho, vv_c
+    )
+    kernel = exterior_kernel_integral(interior.coords, surface, delta)
+    return float(interior.weights @ (factor * kernel))
 
 
 def exchange_integral(exterior: DensityGrid) -> float:
-    """int |grad rho| over the region outside the cavity, without its prefactor B."""
-    return float(exterior.weights @ np.linalg.norm(exterior.grad, axis=1))
+    """int |grad rho| over the region outside the cavity, without its prefactor B
+    (|grad rho| regularized as in `exchange_density`)."""
+    value, _ = exchange_density(np.sum(exterior.grad**2, axis=1))
+    return float(exterior.weights @ value)
 
 
 def electrons_outside(exterior: DensityGrid) -> float:
@@ -257,10 +305,11 @@ def surface_power_integral(
     """sum_i A_i |F_i|^exponent over the elements whose field has the given sign.
 
     The power is on the field alone and the area enters once, so the sum
-    converges to a surface integral as the discretization is refined.
+    converges to a surface integral as the discretization is refined.  |F| is
+    regularized as in `field_power`.
     """
-    mask = field * sign > 0
-    return float(areas[mask] @ np.abs(field[mask]) ** exponent)
+    value, _ = field_power(field, exponent, sign)
+    return float(areas @ value)
 
 
 # ---------------------------------------------------------------------------

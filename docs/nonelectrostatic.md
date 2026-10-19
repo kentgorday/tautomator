@@ -6,17 +6,26 @@ the Roadmap in the README), and it leaves every logP below zero. This document
 describes the correction meant to close that gap: what it computes, why it is
 built the way it is, and what is still missing. Nothing is fitted yet.
 
-The code is in three modules:
+The code:
 
-- `tautomator/nonelectrostatic.py`: the integrals, their inputs (`Solute`),
-  the parameters (`Params`), the parameter-free `Descriptors` a fit keeps, and
-  the file scoring saves them to (`save_descriptors`, `load_descriptors`).
+- `tautomator/nonelectrostatic.py`: the integrands, the integrals, their inputs
+  (`Solute`), the parameters (`Params`), the parameter-free `Descriptors` a fit
+  keeps, and the file scoring saves them to (`save_descriptors`,
+  `load_descriptors`).
 - `tautomator/cavity_quadrature.py`: grids for the inside and the outside of
-  the cavity.
+  the cavity, and the derivative of their weights.
+- `tautomator/dispersion_kernel.py`: the dispersion kernel's surface sum and
+  its derivatives, compiled with numba.
 - `tautomator/pyscf_nonelectrostatic.py`: `solute_from_mf`, which reads the
-  inputs off a converged PySCF PCM mean field, and
+  inputs off a converged PySCF PCM mean field;
   `single_point_with_descriptors`, the PCM single point scoring runs when it
-  saves them.
+  saves them; and `NonelectrostaticTerms`, the correction as a function of the
+  density matrix: energy, potential dG/dD and explicit nuclear gradient.
+- `tautomator/pyscf_nonelectrostatic_gradient.py`: the post-SCF correction's
+  full nuclear gradient (Z-vector).
+- `tautomator/pyscf_nonelectrostatic_scf.py`: the correction inside the SCF.
+- psi4-swig-pcm's `nonelectrostatic.py` and `csrc/nonelectrostatic.cpp`: the
+  same for Psi4, both modes (see Gradients below).
 
 ---
 
@@ -124,10 +133,10 @@ few elements dominate: at HF/6-31+G*, `sum A |F|^3.2` over negative elements is
 
 **The volume integrals need a grid that knows where the cavity is.** Cut off
 with a mask on a DFT grid, the exchange integral converges only linearly in the
-shell spacing and jumps as atoms move. `cavity_quadrature.cavity_grid` cuts each
-ray from each atom at the spheres it crosses and puts a separate rule on every
-stretch. Values below use CMIRS's water coefficients only to express the
-integrals in kcal/mol (HF/6-31+G*, SS(V)PE):
+shell spacing and jumps as atoms move. The prototype's grid cut each ray from
+each atom at the spheres it crosses and put a separate rule on every stretch.
+Values below use CMIRS's water coefficients only to express the integrals in
+kcal/mol (HF/6-31+G*, SS(V)PE):
 
 | grid | formate dispersion | formate exchange | acetone dispersion | acetone exchange |
 |---|---|---|---|---|
@@ -140,6 +149,61 @@ integrals in kcal/mol (HF/6-31+G*, SS(V)PE):
 The default is within 0.03 kcal/mol; the remaining error is angular, from the
 crease in the surface each ray ends on.
 
+That grid is accurate but not smooth: a ray turning tangent to a sphere adds or
+removes a stretch, so the integrals have square-root kinks as atoms move (one
+or two per 0.03 bohr of displacement on ethanol, 1e-6 to 1e-5 of the integral,
+with the slope changing by its own size across them). No use for gradients.
+`cavity_quadrature` now gives every atom a grid that moves rigidly with it,
+Gauss-Legendre on [0, r_a] inside and on [r_a, infinity) outside (after
+t = r_a + L (1 + x)/(1 - x), L = 0.5 bohr), and lets the other spheres in only
+through a smooth (C^2) partition of unity: inside, an atom hands a point to
+the others as it nears its own surface; outside, it gives up points as they
+near another sphere, and has none inside one. The integrals are then C^2 in
+the geometry, and the grid's derivative is the weights' (`partition_gradient`).
+Against the finest grid on HF/6-31+G* densities (IEF-PCM, MMFF geometries):
+
+| grid | formate dispersion | formate exchange | acetone dispersion | acetone exchange |
+|---|---|---|---|---|
+| ray-cut, Lebedev 41, 40 radial (before) | +3.9e-5 | −7.3e-4 | +1.5e-5 | −4.2e-4 |
+| smooth, Lebedev 29, 30 radial | −3.3e-4 | +1.1e-3 | −3.6e-4 | −7.0e-4 |
+| smooth, Lebedev 41, 40 radial | −4.5e-5 | −1.3e-3 | −2.2e-5 | +3.7e-4 |
+| smooth, Lebedev 59, 60 radial | +2.6e-5 | +3.0e-4 | −6.4e-5 | +3.6e-4 |
+| smooth, Lebedev 77, 60 radial | +4.5e-6 | +3.6e-4 | −1.7e-5 | −1.5e-4 |
+| smooth, Lebedev 101, 80 radial | reference | reference | reference | reference |
+
+So the change moved the descriptors by ~1e-4 (dispersion) and ~1e-3
+(exchange), under 0.01 kcal/mol at fitted magnitudes: descriptors saved with
+the earlier grid stay usable.
+
+**How fine the grids need to be, in kcal/mol.** Relative 1e-3 is far tighter
+than the fit needs, so the two grids were sized against the energy instead:
+rough parameters (A = -0.0036, B = 0.0105, from the pilot), the density held
+fixed, each grid varied alone against well-converged ones (inside 59/40,
+outside 77/20), on the 25 pilot neutrals and 17 MNSol ions (wB97X-3c/vDZP;
+the ions also at wB97M-V/def2-QZVPPD, with the same picture). A·D spans
+-7.4 to -1.0 kcal/mol over the set, B·X 1.1 to 5.3:
+
+| grid | max error | RMS |
+|---|---|---|
+| dispersion, inside 17/12 | 0.024 | 0.009 |
+| **dispersion, inside 23/12 (default)** | 0.018 | 0.005 |
+| dispersion, inside 29/12 | 0.005 | 0.002 |
+| exchange, outside 17/12 | 0.062 | 0.022 |
+| exchange, outside 29/12 | 0.031 | 0.009 |
+| **exchange, outside 41/12 (default)** | 0.016 | 0.006 |
+| exchange, outside 41/40 | 0.013 | 0.005 |
+| **G with both defaults** | **0.013** | **0.005** |
+
+(kcal/mol.) Radially, 12 nodes are enough in both regions (8 are not); the
+exterior map length L hardly matters (0.25-2 bohr). Inside, the angular error
+falls steadily with the order. Outside it is the creases between spheres: a
+few 1e-2 kcal/mol that does not fall below order 41, whatever the radial
+count. The defaults have ~10x fewer points inside and ~3x fewer outside than
+41/40 did. With fewer radial nodes each node weighs more, so the integrals'
+third derivative jumps more where a node crosses another sphere's surface (the
+step is C^2): finite differences of the energy need steps of ~1e-5 bohr to
+agree with the analytic gradient to 1e-8. The gradient itself is continuous.
+
 **The integrals are smooth in the geometry; the extrema are not.** Stretching a
 C–O bond of formate over ±0.02 Å in 21 steps, with surface elements appearing
 and disappearing (706–710), the scatter about a quartic is 9e-7 kcal/mol for
@@ -147,11 +211,10 @@ dispersion, 6e-5 for exchange and 5e-8 relative for the surface integral. For
 `F_min` it is 5e-4 relative: the extremum hops between surface elements, so the
 original FESR term has a discontinuous derivative and the integral does not.
 
-**Psi4 and PySCF agreed** on every input, on the psi4-gaussian-pcm prototype
-that preceded psi4-swig-pcm (HF/def2-SVP, SS(V)PE; formate, methylammonium, the
-glycine zwitterion): SCF energies to 1e-12 relative, dispersion and exchange
-integrals to 1e-7, surface integrals to 6e-7. tautomator has no Psi4 path for
-the descriptors yet (below).
+**Psi4 and PySCF agree.** psi4-swig-pcm reimplements the correction on Psi4's
+basis functions and libint2; on the same calculation (formate, HF/6-31G*,
+exact integrals, IEF-PCM) the three terms agree to 5e-10 relative and the
+post-SCF and self-consistent energies to 2e-10 Eh.
 
 ---
 
@@ -210,15 +273,92 @@ Computing the descriptors adds about a quarter to scoring.
 
 ---
 
+## Gradients, and the correction inside the SCF
+
+Two models, both on both backends:
+
+- **Post-SCF** (as CMIRS): G is evaluated on the converged PCM density, which
+  does not see it. This is what the saved descriptors and the fit describe.
+- **Self-consistent**: G and its potential V = dG/dD enter every SCF
+  iteration, so the density relaxes with the correction. The energy is lower
+  by the relaxation energy, second order in the correction.
+
+The pieces are common: `NonelectrostaticTerms` gives G, V and G's explicit
+nuclear gradient at fixed density matrix (basis functions, cavity grids,
+surface elements and nuclei moving with their atoms). The exchange term's
+|grad rho| and the surface term's |F| are regularized as x^2/sqrt(x^2 + floor^2)
+(`GRAD_FLOOR`, `FIELD_FLOOR`), so that V and the gradient stay finite where they
+pass through zero; the energy moves by ~1e-10.
+
+**Post-SCF, PySCF** (`pyscf_nonelectrostatic_gradient.post_scf_gradient`): the
+density's response comes from one Z-vector (CPHF) solve with the SCF's orbital
+Hessian, the PCM's equilibrium response included, and the derivative Fock
+matrix contracted with the response density. Its Coulomb, exchange and PCM
+parts are quadratic forms, so they come exactly from PySCF's own SCF gradient
+code at D +- tZ; the XC part is the kernel contraction on the SCF's grid, with
+the grid's response. Closed shell (RHF/RKS), DF, LDA/GGA functionals including
+(range-separated) hybrids, ECPs; meta-GGA and VV10 functionals are refused
+(PySCF has no VV10 response kernel). Against finite differences of G on the SCF
+density at displaced geometries (formate): 1e-7 Eh/bohr or better for HF, PBE,
+wB97X and wB97X-3c/vDZP.
+
+**Self-consistent, PySCF** (`pyscf_nonelectrostatic_scf.enable_self_consistent`):
+the correction joins the PCM solvent object's energy, Fock contribution and
+gradient, so `mf.kernel()`, `mf.nuc_grad_method()`, scanners and geomeTRIC
+include it. Gradients agree with energy differences to 4e-8 Eh/bohr (HF,
+PBE).
+
+**Psi4** (psi4-swig-pcm, `PCMSettings(nonelectrostatic=...)`): the same terms,
+with the field integrals and their second derivatives from libint2. The
+self-consistent mode adds G and V in the DDX slot; its gradient adds G's
+explicit derivative. For the post-SCF gradient, Psi4 1.11 exports neither a JK
+gradient for an arbitrary density, nor an XC-kernel derivative, nor ECP
+derivative integrals, so the density's response is taken by finite field:
+four extra SCFs with +-lambda V0 and +-2 lambda V0 on the Fock matrix, from the
+previous orbitals, give it by Richardson extrapolation. Both modes agree with
+energy differences to ~5e-8 Eh/bohr.
+
+**Cost.** One geometry-optimization step (SCF from the previous density, then
+the gradient) for toluene at wB97X-3c/vDZP in IEF-PCM water, 4 threads: 7.4 s
+with the PCM alone; 14.0 s self-consistent (+90%: 0.27 s more per SCF
+iteration, 4.4 s more in the gradient); 27.6 s post-SCF (+270%). The post-SCF
+overhead is mostly the density's response, shared by all three terms: the
+Z-vector solve, the XC-kernel contraction on the DFT grid with its grid
+response, two DF-JK gradients for the polarization identity, and the PCM.
+
+**What the relaxation is worth.** Self-consistent minus post-SCF energies, with
+rough parameters: A and B fitted on the pilot's water and hexadecane neutrals
+(with physical signs: A = -0.0036, B = 0.0105), c-, c+ set to give acetate
+-15 and methylammonium -5 kcal/mol, exponent 2.5:
+
+| solute | G | wB97X-3c/vDZP | wB97M-V/def2-TZVPPD |
+|---|---|---|---|
+| ethanol | -1 | -0.06 | -0.08 |
+| acetic acid | -2 | -0.10 | -0.14 |
+| acetate | -14.5 | **-0.97** | **-1.74** |
+| methylammonium | -5 | -0.02 | -0.02 |
+
+(kcal/mol.) Small for neutrals and the cation, but 1-2 kcal/mol for the anion,
+more with diffuse functions: comparable to the accuracy a fit aims for. A
+self-consistent model would have to be fitted self-consistently.
+
+---
+
 ## Not done yet
 
 - **Conformers outside the refinement window** have no scoring-level energy, so
   they have no descriptors either; refinement's 8 kcal/mol window decides
   which conformers the fit can reweight.
-- **Psi4.** psi4_runner runs Psi4 as a separate program, so the descriptors would
-  have to be evaluated inside its input deck from psi4-swig-pcm's cavity and
-  charges.
-- **Gradients.** The correction is added after the SCF, so its gradient needs
-  the response of the density (a Z-vector solve) as well as the explicit
-  derivatives of the three integrals. The integrals are smooth in the geometry
-  (above), so nothing in the quadrature stands in the way.
+- **The pipeline does not use the correction yet**: no config switch puts it
+  in refinement or scoring (there are no fitted parameters), and Psi4 scoring
+  runs do not save descriptors.
+- **Open-shell post-SCF gradient (PySCF).** The Z-vector is closed shell only;
+  no MNSol solute is open shell. The self-consistent mode and psi4-swig-pcm
+  take UHF/UKS but have no test for it.
+- **An exact Psi4 post-SCF gradient** (a Z-vector in C++ against libint2 and
+  libecpint), if the finite-field one is ever not good enough.
+- **Speed.** At the refinement level a post-SCF step costs ~3.7x a PCM-only
+  one, a self-consistent step ~1.9x. Most of the post-SCF cost is the shared
+  response: one DF-JK call with both densities instead of the polarization
+  identity's two, and AO screening on the XC and cavity grids, are the likely
+  gains.

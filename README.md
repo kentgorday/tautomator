@@ -351,8 +351,11 @@ Source under `tautomator/`. One-liner per module:
 | `ensemble.py` | Boltzmann weighting, energy-window filtering, JSON/SDF I/O |
 | `xyz_io.py` | XYZ read/write, including CREST multi-frame ensembles |
 | `nonelectrostatic.py` | Dispersion, exchange and surface-field integrals of the nonelectrostatic correction (unfitted; see [docs/nonelectrostatic.md](docs/nonelectrostatic.md)) |
-| `cavity_quadrature.py` | Quadrature over the inside and the outside of the PCM cavity, ending on its surface |
-| `pyscf_nonelectrostatic.py` | Reads the correction's inputs off a converged PySCF PCM mean field |
+| `cavity_quadrature.py` | Quadrature over the inside and the outside of the PCM cavity: rigid per-atom grids with a smooth partition, and its derivative |
+| `pyscf_nonelectrostatic.py` | Reads the correction's inputs off a converged PySCF PCM mean field; the correction's energy, potential and explicit gradient for any density matrix |
+| `pyscf_nonelectrostatic_gradient.py` | Analytic nuclear gradient of the post-SCF correction (Z-vector) |
+| `pyscf_nonelectrostatic_scf.py` | The correction inside the PCM SCF (self-consistent mode) |
+| `dispersion_kernel.py` | The dispersion kernel's surface sum and its derivatives (numba) |
 | `mnsol.py` | MNSol geometries to checked RDKit structures and SMILES |
 
 Scripts (`scripts/`):
@@ -595,8 +598,9 @@ What's implemented:
   detection, enantiomer multiplicity.
 - Batch runner with per-molecule failure isolation and resume.
 - pKa evaluation-set selection from IUPAC dissociation constants.
-- The nonelectrostatic correction's integrals (unfitted, energy only, PySCF
-  only), saved per conformer at scoring, and the MNSol fitting-set selection.
+- The nonelectrostatic correction (unfitted), saved per conformer at scoring,
+  with analytic nuclear gradients both post-SCF and self-consistent, on PySCF
+  and on Psi4 (psi4-swig-pcm), and the MNSol fitting-set selection.
 
 What's not yet here:
 
