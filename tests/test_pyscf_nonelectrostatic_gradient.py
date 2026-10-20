@@ -40,7 +40,11 @@ def _mean_field(geom: Geometry, method: str = "hf", basis: str = "6-31g*") -> tu
     mol, mf = _build_mf(geom, -1, method, basis, "IEFPCM", "water")
     mf.verbose = 0
     mf.conv_tol = 1e-13
-    mf.conv_tol_grad = 1e-9
+    # G is not variational in the density, so its finite difference carries the
+    # density's residual at first order, divided by the step: at 1e-9 that noise
+    # reached the 5e-7 tolerance (HF and wB97X-3c, on linux-64 MKL).  PBE on its
+    # grid cannot converge to 1e-11.
+    mf.conv_tol_grad = 1e-10
     mf.kernel()
     assert mf.converged
     return mol, mf

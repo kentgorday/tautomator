@@ -77,10 +77,13 @@ class TestKernel:
             c_minus[11] -= step
             numeric = (energy(points, c_plus, areas) - energy(points, c_minus, areas)) / (2 * h)
             assert dE_ds[11, x] == pytest.approx(numeric, rel=1e-7, abs=1e-14)
+        # the energy is linear in the areas, so a large step costs no truncation error
+        # and keeps roundoff (eps |E| / h ~ 1e-9 at h = 1e-5) out of the comparison
+        h_area = 0.1
         a_plus, a_minus = areas.copy(), areas.copy()
-        a_plus[5] += h
-        a_minus[5] -= h
-        numeric = (energy(points, coords, a_plus) - energy(points, coords, a_minus)) / (2 * h)
+        a_plus[5] += h_area
+        a_minus[5] -= h_area
+        numeric = (energy(points, coords, a_plus) - energy(points, coords, a_minus)) / (2 * h_area)
         assert dE_dA[5] == pytest.approx(numeric, rel=1e-9)
 
     def test_derivatives_near_the_surface(self) -> None:

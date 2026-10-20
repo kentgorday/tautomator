@@ -29,6 +29,15 @@ module = [
 ]
 ignore_missing_imports = true
 
+# conda-forge ships RDKit stubs on linux-64 but not osx-arm64 (cross-compiled
+# there), and the stubs are wrong in places (untyped functions, missing
+# re-exports such as AllChem.EmbedMolecule).  Skip them so RDKit is untyped on
+# every platform.
+[[tool.mypy.overrides]]
+module = ["rdkit", "rdkit.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.ruff]
 target-version = "py313"
 line-length = 99
