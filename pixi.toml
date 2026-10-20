@@ -1,20 +1,24 @@
 [workspace]
 channels = ["conda-forge"]
 name = "tautomator"
-platforms = ["linux-64", "osx-arm64"]
-version = "0.1.0"
-# psi4-swig-pcm (the psi4 feature) is a conda package built from its git source,
-# which pixi still treats as a preview feature (0.66).
-preview = ["pixi-build"]
-
-[system-requirements]
 # The Accelerate BLAS selected under [target.osx-arm64.dependencies] is built
 # against Accelerate's current LAPACK interface, which conda-forge accepts only
 # from macOS 15.5.  On an older macOS the install stops with a virtual-package
-# error; see the note there for the build without this floor.  linux-64 ignores
-# it.  The psi4 feature repeats it: an environment without the default feature
-# does not inherit this table.
-macos = "15.5"
+# error; see the note there for the build without this floor.  The floor sits on
+# the platform, so every environment (the psi4 one included) gets it.  A platform
+# that carries a virtual package needs a name of its own; [target.osx-arm64]
+# still selects it.
+platforms = [
+    "linux-64",
+    { name = "osx-arm64-macos-15-5", platform = "osx-arm64", macos = "15.5" },
+]
+version = "0.1.0"
+# psi4-swig-pcm (the psi4 feature) is a conda package built from its git source,
+# which pixi still treats as a preview feature (0.82).
+preview = ["pixi-build"]
+# psi4-swig-pcm builds with pixi-build-python >= 0.8, whose build API pixi
+# accepts from 0.71.
+requires-pixi = ">=0.71.0"
 
 [tasks]
 lint = "ruff check tautomator/ tests/ scripts/"
@@ -128,16 +132,13 @@ dftd4-python = ">=4.0"
 gcp-correction = ">=2.3.2,<3"
 
 # Accelerate for Psi4 too, as in the default environment (see the notes there on
-# the build and on macOS 15.5).  Both tables are repeated because this
-# environment leaves the default feature out.  A Psi4 1.11 wB97X-3c gradient job
+# the build and on macOS 15.5).  The table is repeated because this environment
+# leaves the default feature out.  A Psi4 1.11 wB97X-3c gradient job
 # runs 1.1-1.5x faster, more the busier the machine is, for 30% less CPU time;
 # energies move by 2e-7 Ha.  linux-64 needs nothing: Psi4's build there depends
 # on MKL directly.
 [feature.psi4.target.osx-arm64.dependencies]
 libblas = { version = "*", build = "*_newaccelerate" }
-
-[feature.psi4.system-requirements]
-macos = "15.5"
 
 [environments]
 psi4 = { features = ["psi4"], no-default-feature = true }

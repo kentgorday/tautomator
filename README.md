@@ -306,6 +306,9 @@ into `ensemble.settings` so a checkpoint on disk says which level produced it.
 
 ## Quickstart
 
+Needs pixi 0.71 or later (`requires-pixi` in `pixi.toml`): psi4-swig-pcm is
+built from source with a backend older pixi cannot run.
+
 ```bash
 pixi install            # the default environment: everything but Psi4
 pixi install -e psi4    # only for compute.driver = "psi4"
@@ -475,16 +478,16 @@ The set of things that look weird and aren't. Read before "fixing":
   conda-forge defaults to OpenBLAS; `libblas = { build = "*_newaccelerate" }`
   swaps it for every package in an environment at once, because numpy, scipy,
   PySCF, Psi4, xtb and torch all link the generic `libblas`/`liblapack`. The
-  selector and its macOS requirement appear twice, once per environment: the
-  psi4 environment leaves the default feature out and inherits neither.
+  selector appears twice, once per environment: the psi4 environment leaves
+  the default feature out and does not inherit it.
   Measured on an M4 Pro at 4 threads on a 20-atom molecule: OrbMol-v2 gradients
   3.7x faster, a PySCF wB97M-V/def2-TZVPPD Fock build 1.4x, PySCF wB97X-3c
   1.1x, and PySCF at def2-QZVPPD 1.05x — above 800 basis functions PySCF's XC
   quadrature runs its own non-BLAS code, and its PCM integrals and VV10 never
   used BLAS. A Psi4 1.11 wB97X-3c gradient job is 1.1-1.5x faster, more the
   busier the machine is, for 30% less CPU time. Energies move by 1e-12 Ha
-  (PySCF) and 2e-7 Ha (Psi4). This build needs macOS 15.5, hence
-  `[system-requirements]`; `*_accelerate` is the same BLAS with reference
+  (PySCF) and 2e-7 Ha (Psi4). This build needs macOS 15.5, hence the
+  `macos = "15.5"` on the osx-arm64 platform entry; `*_accelerate` is the same BLAS with reference
   LAPACK and no floor, and measured the same. BLIS is not an option (PySCF gets
   a NaN Fock matrix), nor pthreads OpenBLAS (pytorch excludes it). Accelerate
   ignores `OMP_NUM_THREADS` — its own threads answer to
