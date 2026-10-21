@@ -15,7 +15,7 @@ from pyscf.data.radii import BOHR
 from pyscf.dft import libxc
 from pyscf.solvent import pcm as pyscf_pcm
 
-from tautomator.config import PCM_METHODS, solvent_dielectric
+from tautomator.config import PCM_METHODS, PCM_SWITCHING, solvent_dielectric
 from tautomator.pyscf_fast_pcm import FastPCM, unchecked_functions
 
 # Import applies the D4 parameter pin, and the composite registration and PCM
@@ -175,6 +175,9 @@ class TestFastPCM:
         assert (type(ws) is FastPCM) == (not unchecked_functions())
         assert (ws.method, ws.eps) == (PCM_METHODS[model], solvent_dielectric("methanol"))
         assert ws.radii_table[1] == pytest.approx(ws.vdw_scale * 1.2 / BOHR + ws.r_probe / BOHR)
+        assert ws.surface_discretization_method == PCM_SWITCHING
+        ws.build()
+        assert "R_J" in ws.surface  # what PySCF keeps for ISWIG (SWIG keeps R_in_J, R_sw_J)
 
     def test_smd_keeps_pyscfs_class(self) -> None:
         _mol, mf = _build_mf(self._geom(), 0, "pbe", "def2-svp", "SMD", "water")

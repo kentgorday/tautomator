@@ -189,8 +189,9 @@ score. All three drivers implement the same three operations (`single_point`,
   (`pixi install -e psi4`); tautomator never imports Psi4. Implicit solvent
   comes from [psi4-swig-pcm](https://github.com/kentgorday/psi4-swig-pcm),
   installed in that environment: PySCF's switching/Gaussian PCM (same surface,
-  radii and models) with analytical gradients, so Psi4 minimizes in solvent too,
-  and its solvation energies match PySCF's to <1e-5 kcal/mol at the same level.
+  ISWIG switching, radii and models) with analytical gradients, so Psi4
+  minimizes in solvent too, and its solvation energies match PySCF's to
+  <1e-5 kcal/mol at the same level.
   Offers all five 3c composites (wB97X-3c, r2SCAN-3c, B97-3c, PBEh-3c, HF-3c).
 - **OrbMol-v2 (refinement only).** The machine-learned potential from
   orb-models (Apache-2.0 code and weights), trained on gas-phase
@@ -550,7 +551,8 @@ kinds of work:
   charges with virtual sites, and valence fitting with smee/descent.
 
 Both rest on **one solvation model on every engine**: the same smooth
-switching/Gaussian cavity and IEF-PCM in PySCF and in Psi4 (through
+switching/Gaussian cavity (ISWIG switching, `config.PCM_SWITCHING`) and IEF-PCM
+in PySCF and in Psi4 (through
 [psi4-swig-pcm](https://github.com/kentgorday/psi4-swig-pcm), LGPL-3,
 installed only in the `psi4` environment).
 

@@ -12,7 +12,12 @@ from pathlib import Path
 from types import ModuleType
 
 from tautomator.cavity_quadrature import INSIDE_GRID, OUTSIDE_GRID
-from tautomator.config import DEFAULT_MEMORY_GB, solvent_dielectric, solvent_electron_density
+from tautomator.config import (
+    DEFAULT_MEMORY_GB,
+    PCM_SWITCHING,
+    solvent_dielectric,
+    solvent_electron_density,
+)
 from tautomator.ensemble import filter_charge_state_by_energy
 from tautomator.nonelectrostatic import DELTA, VV_C, ScoredConformer, save_descriptors
 from tautomator.types import Ensemble, ExcludedConformer
@@ -194,6 +199,7 @@ def score(
                 "solvent": solvent,
                 "eps": solvent_dielectric(solvent),
                 "pcm_hydrogen_radius": pcm_hydrogen_radius,
+                "pcm_switching": PCM_SWITCHING,
                 "solvent_rho": solvent_electron_density(solvent),
                 "delta": DELTA,
                 "vv_c": VV_C,

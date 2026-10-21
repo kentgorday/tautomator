@@ -271,6 +271,11 @@ dispersion integral is stored at one damping length (`delta`, CMIRS's 7 bohr)
 and one solvent density; changing either would mean rerunning the SCF.
 Computing the descriptors adds about a quarter to scoring.
 
+`settings["pcm_switching"]` names the PCM surface's switching function
+(`config.PCM_SWITCHING`, ISWIG). Files without it were written on SWIG
+surfaces: other elements and areas, so their surface terms differ a little from
+ISWIG's, and their solvation energies by ~0.02 kcal/mol.
+
 ---
 
 ## Gradients, and the correction inside the SCF

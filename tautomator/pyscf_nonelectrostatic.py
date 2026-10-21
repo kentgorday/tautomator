@@ -592,6 +592,6 @@ class NonelectrostaticTerms:
         # the elements' areas change through the switching function
         from pyscf.solvent.grad.pcm import get_dF_dA
 
-        _dF, dA = get_dF_dA(self.ws.surface)
+        _dF, dA = get_dF_dA(self.ws.surface, self.ws.surface_discretization_method)
         g += np.einsum("i,iax->ax", area_force, dA)
         return g

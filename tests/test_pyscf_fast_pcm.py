@@ -206,7 +206,7 @@ class TestSameInputSameOutput:
 # ---------------------------------------------------------------------------
 # Whole calculations
 # ---------------------------------------------------------------------------
-def _scf(name: str, model: str, fast: bool, xc: str | None = None) -> Any:
+def _scf(name: str, model: str, fast: bool, xc: str | None = None, switching: str = "SWIG") -> Any:
     mol = _mol(name)
     if xc is None:
         mf = scf.UHF(mol) if mol.spin else scf.RHF(mol)
@@ -215,6 +215,8 @@ def _scf(name: str, model: str, fast: bool, xc: str | None = None) -> Any:
         mf.xc = xc
     mf = mf.PCM()
     mf.with_solvent.method, mf.with_solvent.eps = model, EPS
+    if switching != "SWIG":
+        mf.with_solvent.surface_discretization_method = switching
     if fast:
         mf.with_solvent.__class__ = FastPCM
     mf.conv_tol, mf.conv_tol_grad = 1e-12, 1e-8
@@ -223,9 +225,17 @@ def _scf(name: str, model: str, fast: bool, xc: str | None = None) -> Any:
     return mf
 
 
-@pytest.mark.parametrize(("name", "xc"), [("formate", "pbe"), ("methyl", None)])
-def test_scf_and_gradient_match_stock(name: str, xc: str | None) -> None:
-    stock, fast = _scf(name, "IEF-PCM", False, xc), _scf(name, "IEF-PCM", True, xc)
+@pytest.mark.parametrize(
+    ("name", "xc", "switching"),
+    [("formate", "pbe", "SWIG"), ("methyl", None, "SWIG"), ("formate", "pbe", "ISWIG")],
+)
+def test_scf_and_gradient_match_stock(name: str, xc: str | None, switching: str) -> None:
+    """ISWIG (PySCF 2.13 and later) only changes the surface PCM.build makes, and the
+    cavity terms of the gradient FastPCM takes from PySCF."""
+    if switching != "SWIG" and not hasattr(pcm.PCM(_mol(name)), "surface_discretization_method"):
+        pytest.skip(f"PySCF {pyscf_version} has no {switching}")
+    stock = _scf(name, "IEF-PCM", False, xc, switching)
+    fast = _scf(name, "IEF-PCM", True, xc, switching)
     assert abs(fast.e_tot - stock.e_tot) < 1e-9
     assert abs(fast.with_solvent.e - stock.with_solvent.e) < 1e-9
     np.testing.assert_allclose(

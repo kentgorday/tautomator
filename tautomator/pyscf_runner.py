@@ -26,6 +26,7 @@ from tautomator.config import (
     AUXBASIS,
     DEFAULT_MEMORY_GB,
     PCM_METHODS,
+    PCM_SWITCHING,
     solvent_dielectric,
 )
 from tautomator.geometric_logging import geometric_quiet
@@ -532,6 +533,15 @@ def _build_mf(
             rad = _pcm.modified_Bondi.copy()
             rad[1] = pcm_hydrogen_radius / _radii.BOHR
             ws.radii_table = ws.vdw_scale * rad + ws.r_probe / _radii.BOHR
+            # Psi4 builds the same surface (psi4_runner._pcm_block).  A PySCF without the
+            # attribute would ignore it and build SWIG's.
+            if not hasattr(ws, "surface_discretization_method"):
+                import pyscf
+
+                raise NotImplementedError(
+                    f"PySCF {pyscf.__version__} has no {PCM_SWITCHING} switching (2.13 and later)"
+                )
+            ws.surface_discretization_method = PCM_SWITCHING
             # The same model, several times faster; left as PySCF's own PCM on a PySCF
             # whose PCM internals FastPCM was not checked against.
             from tautomator.pyscf_fast_pcm import use_fast_pcm

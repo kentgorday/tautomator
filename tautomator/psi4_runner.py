@@ -27,6 +27,7 @@ from tautomator.config import (
     AUXBASIS,
     DEFAULT_MEMORY_GB,
     PCM_METHODS,
+    PCM_SWITCHING,
     solvent_dielectric,
 )
 from tautomator.types import Geometry
@@ -144,9 +145,9 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
 
     psi4_swig_pcm.enable() makes Psi4's own energy(), gradient(), optimize() and
     frequency() include the PCM, with analytical gradients.  The model is
-    pyscf_runner's: switching/Gaussian surface on Lebedev order 29, modified-Bondi
-    radii x 1.2 with hydrogen at pcm_hydrogen_radius (Angstrom), and the same
-    dielectric constant, so both drivers build the same cavity.  Its warnings go
+    pyscf_runner's: switching/Gaussian surface (PCM_SWITCHING) on Lebedev order 29,
+    modified-Bondi radii x 1.2 with hydrogen at pcm_hydrogen_radius (Angstrom), and
+    the same dielectric constant, so both drivers build the same cavity.  Its warnings go
     to stderr, where _run_psi4 looks for them.
     """
     key = solvent_model.upper().replace("-", "")
@@ -157,6 +158,7 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
         )
     settings = (
         f"method={PCM_METHODS[key]!r}, eps={solvent_dielectric(solvent)!r}, "
+        f"switching={PCM_SWITCHING!r}, "
         f"radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r})"
     )
     return (

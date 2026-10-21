@@ -142,6 +142,17 @@ PCM_METHODS: dict[str, str] = {
     "COSMO": "COSMO",
 }
 
+# The switching function both drivers' PCM surfaces use (PySCF's
+# surface_discretization_method, psi4-swig-pcm's PCMSettings.switching).  ISWIG
+# (PySCF 2.13 and later) fades buried points out with an erf over each Gaussian's
+# width instead of SWIG's polynomial band.  It keeps ~11% more points (9-14% over
+# the pKa set) for the same area and moved solvation energies by ~0.02 kcal/mol;
+# SCF time rose 0-3% and gradient time 4-9% (wB97X-3c/vDZP, wB97M-V/def2-TZVPPD).
+# FastPCM's stored integrals grow with the points too: a molecule that just fit in
+# memory_gb on SWIG can spill on ISWIG, and its SCF then runs at stock PCM speed
+# (aspirin anion, def2-TZVPPD, memory_gb = 8: 3.7 GB fit, 4.2 GB did not; 1.8x).
+PCM_SWITCHING = "ISWIG"
+
 # Implicit-solvent models, by the driver that can run them.  One model is used
 # for every solvation energy in a run, so the refinement filter ranks on the
 # same physics scoring does.  Both drivers default to IEF-PCM.  SS(V)PE is not

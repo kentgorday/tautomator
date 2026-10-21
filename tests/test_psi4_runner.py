@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from tautomator import psi4_runner, refinement, scoring
-from tautomator.config import DEFAULT_MEMORY_GB, solvent_dielectric
+from tautomator.config import DEFAULT_MEMORY_GB, PCM_SWITCHING, solvent_dielectric
 from tautomator.psi4_runner import (
     _df_basis_block,
     _pcm_block,
@@ -48,6 +48,9 @@ class TestPCMBlock:
 
     def test_dielectric_is_the_one_pyscf_gets(self) -> None:
         assert f"eps={solvent_dielectric('methanol')!r}" in _pcm_block("IEFPCM", "Methanol")
+
+    def test_switching_is_the_one_pyscf_gets(self) -> None:
+        assert f"switching={PCM_SWITCHING!r}" in _pcm_block("IEFPCM", "water")
 
     def test_hydrogen_radius_is_a_free_parameter(self) -> None:
         assert "modified_bondi_radii(hydrogen=1.1)" in _pcm_block("IEFPCM", "water")
