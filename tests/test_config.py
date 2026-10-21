@@ -1084,3 +1084,133 @@ class TestNonelectrostaticDescriptors:
     ) -> None:
         with pytest.raises(ValueError, match=f"analytical PCM .* not {given}"):
             self._load(tmp_toml, f'nonelectrostatic_descriptors = true\nsolvent_model = "{model}"')
+
+
+class TestDropSolventModels:
+    """MOIST's DROP cavities as solvent models "<PCM model>/<cavity>" (PySCF only)."""
+
+    @pytest.fixture()
+    def moist_installed(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
+        """Make the config see MOIST installed or not, in whichever environment this runs."""
+        import importlib.util
+
+        find_spec = importlib.util.find_spec
+
+        def set_installed(installed: bool) -> None:
+            def fake(name: str, *args: object, **kwargs: object) -> object:
+                if name == "moist":
+                    return object() if installed else None
+                return find_spec(name, *args, **kwargs)  # type: ignore[arg-type]
+
+            monkeypatch.setattr(importlib.util, "find_spec", fake)
+
+        return set_installed
+
+    def _load(
+        self,
+        tmp_toml: Callable[[str], Path],
+        model: str,
+        *,
+        driver: str = "pyscf",
+        scoring: str = "",
+        refinement: str = "",
+    ) -> PkaConfig:
+        return load_config(
+            tmp_toml(f"""
+                [molecule]
+                smiles = "CCO"
+                [refinement]
+                {refinement}
+                [scoring]
+                solvent_model = "{model}"
+                {scoring}
+                [compute]
+                driver = "{driver}"
+            """)
+        )
+
+    @pytest.mark.parametrize(
+        ("model", "parsed"),
+        [
+            ("IEFPCM/SvdW-DROP", ("IEF-PCM", "SvdW-DROP")),
+            ("ief-pcm/svdw-drop", ("IEF-PCM", "SvdW-DROP")),
+            ("PCM/rho-DROP", ("IEF-PCM", "rho-DROP")),
+            ("CPCM/isodensity-DROP", ("C-PCM", "rho-DROP")),
+            ("COSMO/SvdW-DROP", ("COSMO", "SvdW-DROP")),
+            ("IEFPCM", None),
+            ("SMD/SvdW-DROP", None),
+            ("IEFPCM/ISWIG", None),
+        ],
+    )
+    def test_names(self, model: str, parsed: tuple[str, str] | None) -> None:
+        from tautomator.config import drop_solvent_model
+
+        assert drop_solvent_model(model) == parsed
+
+    @pytest.mark.parametrize(
+        "model", ["IEFPCM/SvdW-DROP", "IEF-PCM/rho-DROP", "CPCM/SvdW-DROP", "COSMO/rho-DROP"]
+    )
+    def test_accepted_on_pyscf(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        model: str,
+    ) -> None:
+        moist_installed(True)
+        config = self._load(tmp_toml, model)
+        assert config.scoring.solvent_model == model
+        assert config.refinement.solvation == "optimize"  # MOIST has analytical gradients
+        assert config.provenance()["scoring"]["solvent_model"] == model
+
+    def test_not_on_psi4(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match="not available on the psi4 driver"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP", driver="psi4")
+
+    def test_unknown_cavity(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match="not available on the pyscf driver"):
+            self._load(tmp_toml, "IEFPCM/sphere-DROP")
+
+    def test_needs_moist(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(False)
+        with pytest.raises(ValueError, match="moist pixi environment"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP")
+
+    @pytest.mark.parametrize("section", ["scoring", "refinement"])
+    def test_hydrogen_radius_is_pyscf_cavitys(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        section: str,
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+
+    def test_no_hessian_in_solvent(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match="Hessian"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP", refinement='rrho = "refinement"')
+        # a gas-phase Hessian (solvation as a single point) is fine
+        config = self._load(
+            tmp_toml,
+            "IEFPCM/SvdW-DROP",
+            refinement='rrho = "refinement"\nsolvation = "single_point"',
+        )
+        assert config.refinement.rrho == "refinement"
+
+    def test_no_nonelectrostatic_descriptors_yet(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match="not yet on MOIST's DROP cavities"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP", scoring="nonelectrostatic_descriptors = true")

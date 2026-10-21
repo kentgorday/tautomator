@@ -27,6 +27,7 @@ from tautomator.config import (
     DEFAULT_MEMORY_GB,
     PCM_METHODS,
     PCM_SWITCHING,
+    drop_solvent_model,
     solvent_dielectric,
 )
 from tautomator.geometric_logging import geometric_quiet
@@ -515,7 +516,15 @@ def _build_mf(
         from pyscf import solvent as pyscf_solvent
 
         solvent_model_upper = solvent_model.upper().replace("-", "")
-        if solvent_model_upper == "SMD":
+        drop = drop_solvent_model(solvent_model)
+        if drop is not None:
+            if pcm_hydrogen_radius != 1.1:
+                raise ValueError(
+                    f"pcm_hydrogen_radius = {pcm_hydrogen_radius} applies to PySCF's own PCM "
+                    f"cavity, not to {solvent_model!r} (MOIST's radii)"
+                )
+            mf = _attach_drop(mf, drop[0], drop[1], solvent_dielectric(solvent), threads)
+        elif solvent_model_upper == "SMD":
             mf = pyscf_solvent.SMD(mf)
             mf.with_solvent.solvent = solvent
         elif solvent_model_upper in PCM_METHODS:
@@ -563,10 +572,49 @@ def _build_mf(
     return mol, mf
 
 
+def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int) -> Any:
+    """``mf`` in a PCM model on one of MOIST's DROP cavities (tautomator.pyscf_moist).
+
+    After density fitting, like PySCF's own solvent wrappers: MOIST's wrapper rebuilds a
+    density-fitted mean field without FastHost.
+    """
+    try:
+        from moist import Context, ModelComponentCOSMO, ModelComponentCPCM, ModelComponentIEFPCM
+
+        from tautomator.pyscf_moist import attach, rho_drop, svdw_drop
+    except ImportError as err:
+        raise ImportError(
+            f"the {cavity} cavity needs MOIST, installed only in the moist pixi "
+            "environment (pixi install -e moist)"
+        ) from err
+    component = {
+        "IEF-PCM": ModelComponentIEFPCM,
+        "C-PCM": ModelComponentCPCM,
+        "COSMO": ModelComponentCOSMO,
+    }[pcm_method](eps)
+    surface = {"SvdW-DROP": svdw_drop, "rho-DROP": rho_drop}[cavity]()
+    context = Context(nthreads=threads, verbosity=0)
+    return attach(mf, cavity=surface, components=[component], context=context)
+
+
 def _run_scf_robust(mf: Any) -> float:
-    """Run SCF; on non-convergence, retry with second-order SCF (.newton())."""
+    """Run SCF; on non-convergence, retry with second-order SCF (.newton()).
+
+    MOIST's PCM (a DROP solvent model) has no second-order SCF: there the retry is a
+    level-shifted SCF from the last density instead.
+    """
     energy = mf.kernel()
     if mf.converged:
+        return float(energy)
+
+    if hasattr(mf, "with_moist"):
+        log.warning("SCF did not converge; retrying with a level shift (MOIST has no Newton)")
+        dm = mf.make_rdm1()
+        mf.level_shift, mf.max_cycle = 0.25, 200
+        energy = mf.kernel(dm0=dm)
+        mf.level_shift = 0.0
+        if not mf.converged:
+            raise RuntimeError("PySCF SCF failed to converge, even with a level shift")
         return float(energy)
 
     log.warning("SCF did not converge; retrying with second-order SCF (Newton)")
@@ -724,6 +772,10 @@ def frequencies(
     """
     if geom.n_atoms == 1:
         return []
+    if solvent_model is not None and drop_solvent_model(solvent_model) is not None:
+        raise NotImplementedError(
+            f"no Hessian in solvent_model = {solvent_model!r}: MOIST's PCM has none"
+        )
     method_lower = method.lower().replace("_", "-")
     hess_method = _HESSIAN_FALLBACK.get(method_lower, method)
     if hess_method != method:

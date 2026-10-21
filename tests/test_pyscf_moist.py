@@ -20,6 +20,7 @@ import moist.pyscf as mp  # noqa: E402
 from moist import (  # noqa: E402
     Context,
     IsodensityParameters,
+    ModelComponentCOSMO,
     ModelComponentCPCM,
     ModelComponentIEFPCM,
 )
@@ -27,7 +28,7 @@ from moist.pyscf import DROP, Isodensity  # noqa: E402
 from pyscf import dft, gto, scf  # noqa: E402
 from pyscf.solvent import pcm  # noqa: E402
 
-from tautomator import pyscf_moist  # noqa: E402
+from tautomator import pyscf_moist, pyscf_runner  # noqa: E402
 from tautomator.pyscf_moist import (  # noqa: E402
     CHECKED,
     REPLACED,
@@ -38,6 +39,7 @@ from tautomator.pyscf_moist import (  # noqa: E402
     rho_drop,
     svdw_drop,
 )
+from tautomator.types import Geometry  # noqa: E402
 
 EPS = 78.3553
 CONTEXT = Context(nthreads=2, verbosity=0)
@@ -321,3 +323,65 @@ class TestECP:
         np.testing.assert_array_equal(with_fill.xyz, without.xyz)
         iodine = mol.atom_coords()[1]
         assert np.linalg.norm(np.asarray(with_fill.xyz) - iodine, axis=1).min() > 3.0
+
+
+# ---------------------------------------------------------------------------
+# The PySCF runner's DROP solvent models ("<PCM model>/<cavity>")
+# ---------------------------------------------------------------------------
+WATER = Geometry(
+    symbols=("O", "H", "H"),
+    coords=np.array([[0.0, 0.0, 0.1173], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692]]),
+)
+
+
+class TestRunner:
+    @pytest.mark.parametrize(
+        ("model", "component", "lsf"),
+        [
+            ("IEFPCM/SvdW-DROP", ModelComponentIEFPCM, "SvdW"),
+            ("CPCM/rho-DROP", ModelComponentCPCM, "Isodensity"),
+            ("COSMO/SvdW-DROP", ModelComponentCOSMO, "SvdW"),
+        ],
+    )
+    def test_build_mf_attaches_moist(self, model: str, component: Any, lsf: str) -> None:
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", model, "water")
+        assert type(mf.with_moist) is pyscf_moist._FastState
+        assert hasattr(mf, "with_df")  # density fitting underneath, as for PySCF's PCM
+        (item,) = mf.with_moist.components
+        assert type(item) is component
+        assert type(mf.with_moist.cavity.lsf).__name__ == lsf
+        assert mf.with_moist.cavity.parameters.wleb_prune_level == pyscf_moist.PRUNE_LEVEL
+
+    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
+    def test_single_point_with_vdzp(self, model: str) -> None:
+        """wB97X-3c/vDZP: an ECP on the oxygen, which MOIST's own host would refuse."""
+        gas = pyscf_runner.single_point(WATER, 0, "wB97X-3c", "vDZP")
+        solvated = pyscf_runner.single_point(WATER, 0, "wB97X-3c", "vDZP", model, "water")
+        # water's electrostatic solvation energy, in kcal/mol: -6.5 on PySCF's own cavity
+        assert -8.0 < (solvated - gas) * 627.5095 < -6.0
+
+    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
+    def test_optimize(self, model: str) -> None:
+        geom, energy, converged = pyscf_runner.optimize(
+            WATER, 0, "b3lyp", "def2-svp", model, "water"
+        )
+        assert converged
+        assert energy == pytest.approx(
+            pyscf_runner.single_point(geom, 0, "b3lyp", "def2-svp", model, "water"), abs=1e-7
+        )
+
+    def test_unconverged_scf_retries_with_a_level_shift(self) -> None:
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+        reference = pyscf_runner._run_scf_robust(mf)
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+        mf.max_cycle = 2
+        assert pyscf_runner._run_scf_robust(mf) == pytest.approx(reference, abs=1e-7)
+        assert mf.converged and mf.level_shift == 0.0
+
+    def test_no_hessian(self) -> None:
+        with pytest.raises(NotImplementedError, match="no Hessian"):
+            pyscf_runner.frequencies(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+
+    def test_hydrogen_radius_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
+            pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water", 1.2)

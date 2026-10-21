@@ -142,6 +142,27 @@ PCM_METHODS: dict[str, str] = {
     "COSMO": "COSMO",
 }
 
+# MOIST's DROP cavities (tautomator.pyscf_moist), for the same PCM models: a
+# solvent model "<model>/<cavity>", e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth
+# solvent-excluded-like surface over MOIST's CPCM radii, rho-DROP the electron
+# isodensity surface (rho_iso = 1e-3 e/bohr^3), which follows the density through
+# the SCF.  PySCF driver only, in the moist pixi environment.  Normalized name
+# (upper case, no hyphens) -> MOIST's name.
+DROP_CAVITIES: dict[str, str] = {
+    "SVDWDROP": "SvdW-DROP",
+    "RHODROP": "rho-DROP",
+    "ISODENSITYDROP": "rho-DROP",
+}
+
+
+def drop_solvent_model(model: str) -> tuple[str, str] | None:
+    """(PCM method, MOIST cavity name) of a "<model>/<cavity>" solvent model, else None."""
+    pcm, sep, cavity = model.upper().replace("-", "").partition("/")
+    if sep and pcm in PCM_METHODS and cavity in DROP_CAVITIES:
+        return PCM_METHODS[pcm], DROP_CAVITIES[cavity]
+    return None
+
+
 # The switching function both drivers' PCM surfaces use (PySCF's
 # surface_discretization_method, psi4-swig-pcm's PCMSettings.switching).  ISWIG
 # (PySCF 2.13 and later) fades buried points out with an erf over each Gaussian's
@@ -161,7 +182,13 @@ PCM_SWITCHING = "ISWIG"
 # not converge with the surface grid (the ill behaviour Lange & Herbert
 # describe, Chem. Phys. Lett. 509, 77).
 _SOLVENT_MODELS: dict[str, set[str]] = {
-    "pyscf": {*PCM_METHODS, "SMD", "DDPCM", "DDCOSMO"},
+    "pyscf": {
+        *PCM_METHODS,
+        "SMD",
+        "DDPCM",
+        "DDCOSMO",
+        *(f"{pcm}/{cavity}" for pcm in PCM_METHODS for cavity in DROP_CAVITIES),
+    },
     "psi4": set(PCM_METHODS),
 }
 
@@ -651,6 +678,8 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 f"[scoring] solvent_model = {scoring.solvent_model!r} is not available "
                 f"on the {compute.driver} driver (has: {', '.join(sorted(allowed))})."
             )
+        if drop_solvent_model(scoring.solvent_model) is not None:
+            _validate_drop(ref, scoring)
 
     if scoring.nonelectrostatic_descriptors:
         if compute.driver != "pyscf":
@@ -660,6 +689,11 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 "single point."
             )
         model = scoring.solvent_model
+        if model is not None and drop_solvent_model(model) is not None:
+            raise ValueError(
+                "[scoring] nonelectrostatic_descriptors are computed on PySCF's own PCM "
+                f"cavity, not yet on MOIST's DROP cavities (solvent_model = {model!r})"
+            )
         if model is None or model.upper().replace("-", "") not in PCM_METHODS:
             given = "gas-phase scoring" if model is None else f"solvent_model = {model!r}"
             raise ValueError(
@@ -675,6 +709,34 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
             "Hessian for these functionals, so every conformer costs a finite-difference "
             "Hessian (~6N gradient calculations) -- usually far more than the geometry "
             "optimization itself. rrho = 'xtb' is the default for good reason."
+        )
+
+
+def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig) -> None:
+    """What a MOIST DROP cavity (solvent_model "<model>/<cavity>") cannot do."""
+    import importlib.util
+
+    model = scoring.solvent_model
+    if importlib.util.find_spec("moist") is None:
+        raise ValueError(
+            f"[scoring] solvent_model = {model!r} needs MOIST, which is installed only in "
+            "the moist pixi environment: `pixi install -e moist` (it compiles MOIST), then "
+            "run with `pixi run -e moist ...`."
+        )
+    for name, radius in (
+        ("[scoring]", scoring.pcm_hydrogen_radius),
+        ("[refinement]", ref.pcm_hydrogen_radius),
+    ):
+        if radius != 1.1:
+            raise ValueError(
+                f"{name} pcm_hydrogen_radius = {radius} sets the hydrogen radius of PySCF's "
+                f"own PCM cavity; solvent_model = {model!r} builds MOIST's cavity, with "
+                "MOIST's radii. Remove it."
+            )
+    if ref.rrho == "refinement" and ref.solvation == "optimize" and ref.engine != "orbmol":
+        raise ValueError(
+            f"[refinement] rrho = 'refinement' with solvation = 'optimize' needs a Hessian "
+            f"in solvent, and MOIST's PCM ({model!r}) has none. Use rrho = 'xtb'."
         )
 
 

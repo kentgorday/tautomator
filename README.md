@@ -184,6 +184,23 @@ score. All three drivers implement the same three operations (`single_point`,
   larger `memory_gb` raises the limit, if the machine has the memory. On macOS
   PySCF cannot measure the memory the process holds, so the whole half is
   available; on Linux it can, so the limit there is lower.
+
+  The same PCM models also run on MOIST's DROP cavities
+  (`tautomator/pyscf_moist.py`), in the experimental `moist` environment
+  (`pixi install -e moist`, then `pixi run -e moist ...`): `solvent_model =
+  "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and cavity `SvdW-DROP`
+  (a smooth solvent-excluded-like surface over MOIST's CPCM radii) or
+  `rho-DROP` (the electron isodensity surface, rho_iso = 1e-3 e/bohr³, which
+  follows the density through the SCF), e.g. `"IEFPCM/SvdW-DROP"`. Water at
+  wB97X-3c/vDZP: −6.9 and −7.2 kcal/mol, against −6.5 on PySCF's cavity. Both
+  have analytical gradients, so refinement minimizes in them, and both take
+  vDZP's ECPs, which MOIST's own PySCF code refuses. They have no Hessian
+  (`rrho = "refinement"` with `solvation = "optimize"` is refused), no
+  nonelectrostatic descriptors yet, and ignore `pcm_hydrogen_radius`, a
+  setting of PySCF's cavity (so a value other than 1.1 is refused). MOIST
+  solves the PCM; tautomator's own code supplies its integrals, as FastPCM
+  keeps them: an IEF-PCM SvdW-DROP energy and gradient costs 1.3-1.4x the
+  gas-phase job, against 3.1-3.5x with MOIST's own PySCF code.
 - **`"psi4"`.** Subprocess driver, writes input decks and parses output. The
   `psi4` executable comes from a pixi environment of its own
   (`pixi install -e psi4`); tautomator never imports Psi4. Implicit solvent
