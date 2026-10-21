@@ -1,0 +1,14 @@
+pswf.cpp calls std::fill without including <algorithm>.  libc++ before 23 brought it in
+through another standard header; libc++ 23 (conda-forge's clang 23 on macOS) does not.
+
+--- a/src/moist/math/fft/finufft/src/common/pswf.cpp
++++ b/src/moist/math/fft/finufft/src/common/pswf.cpp
+@@ -11,6 +11,8 @@
+ #include <finufft_common/pswf.h>
+ #include <finufft_common/safe_call.h>
+
++#include <algorithm>
++
+ namespace finufft::common {
+
+ namespace { // file-local helpers

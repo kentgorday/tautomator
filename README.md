@@ -440,8 +440,12 @@ The set of things that look weird and aren't. Read before "fixing":
   MOIST release means copying the revisions from its `subprojects/*.wrap`
   too. Those libraries are linked statically into MOIST's Python extension
   and not installed, so they cannot clash with the `mctc-lib` xtb brings in.
-  The first `pixi install -e moist` compiles MOIST (about 9 minutes on 4
-  cores).
+  The recipe builds against the netlib variants of `libblas`/`liblapack`, as
+  conda-forge's own builds do; keep it that way. In the OpenBLAS variants,
+  which the solver otherwise picks for a build, both are links to
+  `libopenblas`, so MOIST would load only where OpenBLAS is installed, not
+  beside MKL (linux-64) or Accelerate (osx-arm64). The first
+  `pixi install -e moist` compiles MOIST (about 9 minutes on 4 cores).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2

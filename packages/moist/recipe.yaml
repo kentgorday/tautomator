@@ -13,6 +13,9 @@ package:
 source:
   - git: https://github.com/lukaswittmann/moist.git
     tag: ${{ tag }}
+    patches:
+      # a missing #include in MOIST's copy of FINUFFT; clang 23's libc++ (macOS) needs it
+      - patches/0001-finufft-pswf-include-algorithm.patch
   - git: https://github.com/chselz/fclap.git
     tag: v0.1.0
     target_directory: subprojects/fclap
@@ -63,9 +66,12 @@ requirements:
     - cffi
     - setuptools
     # The generic BLAS/LAPACK interfaces: -llapack -lblas, whichever implementation the
-    # environment selects (OpenBLAS on linux-64, Accelerate on osx-arm64 in tautomator).
-    - libblas
-    - liblapack
+    # environment selects (MKL on linux-64, Accelerate on osx-arm64 in tautomator).  Built
+    # against the netlib variants, as conda-forge's own pinning does: in the OpenBLAS
+    # variants (the solver's default here) liblapack and libblas are links to libopenblas,
+    # so the extension would record libopenblas, which neither environment installs.
+    - libblas * *netlib
+    - liblapack * *netlib
     - if: osx
       then: llvm-openmp
   run:
