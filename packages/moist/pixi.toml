@@ -1,0 +1,11 @@
+# MOIST (https://github.com/lukaswittmann/moist, MPL-2.0) as a conda package built from its
+# git source.  MOIST ships no pixi manifest and no conda-forge package, so the recipe lives
+# here: recipe.yaml pins the release and runs MOIST's own meson build.  The cavity code is
+# Fortran, so this compiles MOIST (several minutes) the first time an environment needs it.
+
+[package]
+name = "moist"
+version = "1.1.0a1"
+
+[package.build]
+backend = { name = "pixi-build-rattler-build", version = "*" }

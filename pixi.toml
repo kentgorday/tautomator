@@ -140,5 +140,14 @@ gcp-correction = ">=2.3.2,<3"
 [feature.psi4.target.osx-arm64.dependencies]
 libblas = { version = "*", build = "*_newaccelerate" }
 
+# MOIST (experimental): its SvdW-DROP and isodensity (rho-DROP) cavities, as the cavity
+# for PySCF's PCM and the nonelectrostatic correction.  Built from source by pixi-build
+# (packages/moist: a rattler-build recipe pinned to a MOIST release); an environment of
+# its own until it is used by tautomator itself.
+[feature.moist.dependencies]
+moist = { path = "packages/moist" }
+
 [environments]
+default = { solve-group = "default" }
 psi4 = { features = ["psi4"], no-default-feature = true }
+moist = { features = ["moist"], solve-group = "default" }
