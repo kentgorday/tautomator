@@ -65,6 +65,10 @@ log = logging.getLogger(__name__)
 #: points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost scales with the points.
 PRUNE_LEVEL = 4
 
+#: Size of one block of derivative integrals in the gradient pass, in bytes (best of 8 MB to
+#: 256 MB on acetaminophen and lidocaine at def2-SVP)
+BLOCK_BYTES = 16e6
+
 
 def svdw_drop(**parameters: Any) -> Any:
     """The SvdW-DROP cavity with PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
@@ -241,7 +245,10 @@ class FastHost(mp.PySCFHost):  # type: ignore[misc]
         dsym = (dm + dm.T).ravel()
         vq = np.zeros((3, nao * nao))
         dv = np.empty((3, xi.size))
-        blksize = int(min(xi.size, max(16, self._budget_bytes() / (3 * nao * nao * 8))))
+        # Small blocks: libcint fills a block of about BLOCK_BYTES 2-5x faster per point than
+        # one of a few hundred MB (2.0 s against 9.4 s for acetaminophen's whole surface)
+        per_point = 3 * nao * nao * 8
+        blksize = int(max(1, min(BLOCK_BYTES, self._budget_bytes()) // per_point))
         intor = mol._add_suffix("int3c2e_ip1")
         for p0, p1 in lib.prange(0, xi.size, blksize):
             fakemol = gto.fakemol_for_charges(coords[p0:p1], expnt=xi[p0:p1] ** 2)
@@ -249,7 +256,7 @@ class FastHost(mp.PySCFHost):  # type: ignore[misc]
             t = df.incore.aux_e2(mol, fakemol, intor=intor, aosym="s1", comp=3)
             t = t.reshape(3, nao * nao, p1 - p0)
             vq += t @ q[p0:p1]
-            dv[:, p0:p1] = np.einsum("xpi,p->xi", t, dsym)
+            dv[:, p0:p1] = dsym @ t
         self._fused = (_key(coords, xi), q.copy(), vq.reshape(3, nao, nao), dv)
 
     def clear_fused(self) -> None:
