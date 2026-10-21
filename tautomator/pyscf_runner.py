@@ -576,7 +576,7 @@ def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int
     """``mf`` in a PCM model on one of MOIST's DROP cavities (tautomator.pyscf_moist).
 
     After density fitting, like PySCF's own solvent wrappers: MOIST's wrapper rebuilds a
-    density-fitted mean field without FastHost.
+    density-fitted mean field without MoistHost.
     """
     try:
         from moist import Context, ModelComponentCOSMO, ModelComponentCPCM, ModelComponentIEFPCM

@@ -2,7 +2,7 @@
 
 MOIST (packages/moist, in the moist pixi environment) builds the cavity, solves the PCM and
 chains the cavity's motion into the nuclear gradient, in Fortran.  moist.pyscf's host answers
-MOIST's requests with PySCF integrals, and almost all of the time goes there; FastHost
+MOIST's requests with PySCF integrals, and almost all of the time goes there; MoistHost
 answers the same requests sooner, and attach() puts MOIST on a mean field with it:
 
 - SCF: the Coulomb integrals (k|mn) between the AO pairs and the surface's Gaussian charges
@@ -28,10 +28,10 @@ FastPCM's other gradient trick, int1e_grids_ip under rinv_zeta for the points th
 Gaussian width, is not used: DROP gives every point its own width, so it would be one call
 per point (4-6x slower than stock MOIST on drug-sized molecules).
 
-FastHost and attach() rely on moist.pyscf internals (REPLACED).  attach() uses them only when
+MoistHost and attach() rely on moist.pyscf internals (REPLACED).  attach() uses them only when
 the installed source of every one matches a MOIST release this module was checked against
 (CHECKED); otherwise it attaches MOIST's own host, at its own speed and with its own ECP
-refusal.  To check a new MOIST: run tests/test_pyscf_moist.py with it, and if FastHost still
+refusal.  To check a new MOIST: run tests/test_pyscf_moist.py with it, and if MoistHost still
 matches MOIST's host there, add the new fingerprints that test_replaced_functions_are_checked
 prints to CHECKED.
 """
@@ -82,7 +82,7 @@ def svdw_drop(**parameters: Any) -> Any:
 def rho_drop(**parameters: Any) -> Any:
     """The isodensity cavity (rho-DROP, MOIST's defaults: rho_iso 1e-3 e/bohr^3), pruned.
 
-    The surface follows the density, so it is rebuilt every SCF iteration and FastHost's
+    The surface follows the density, so it is rebuilt every SCF iteration and MoistHost's
     kept (k|mn) is recomputed with it (once per iteration, where MOIST's host does it twice).
     """
     parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
@@ -90,7 +90,7 @@ def rho_drop(**parameters: Any) -> Any:
 
 
 def _replaced() -> dict[str, Callable[..., Any]]:
-    """The moist.pyscf internals FastHost and attach() reproduce or depend on, by name."""
+    """The moist.pyscf internals MoistHost and attach() reproduce or depend on, by name."""
     return {
         "PySCFHost.__init__": mp.PySCFHost.__init__,
         "PySCFHost.structure": mp.PySCFHost.structure,
@@ -168,8 +168,9 @@ def _key(coords: Array, xi: Array) -> tuple[bytes, bytes]:
     return np.ascontiguousarray(coords).tobytes(), np.ascontiguousarray(xi).tobytes()
 
 
-class FastHost(mp.PySCFHost):  # type: ignore[misc]
-    """moist.pyscf.PySCFHost with (k|mn) kept per surface and a one-pass gradient."""
+class MoistHost(mp.PySCFHost):  # type: ignore[misc]
+    """The PySCF host that answers MOIST's requests: moist.pyscf.PySCFHost with (k|mn) kept
+    per surface and a one-pass gradient."""
 
     def __init__(self, mol: Any, *, allow_ecp: bool = False) -> None:
         super().__init__(mol)
@@ -203,14 +204,14 @@ class FastHost(mp.PySCFHost):  # type: ignore[misc]
             self._packed = None  # free the last surface's before sizing this one
             weights = lib.pack_tril(1.0 - 0.5 * np.eye(nao))
             if xi.size * npair * 8 > self._budget_bytes():
-                logger.info(mol, "FastHost: (k|mn) does not fit; MOIST's own integrals")
+                logger.info(mol, "MoistHost: (k|mn) does not fit; MOIST's own integrals")
                 self._packed = (key, None, weights)
             else:
                 fakemol = gto.fakemol_for_charges(np.asarray(coords), expnt=np.asarray(xi) ** 2)
                 fakemol.cart = mol.cart
                 int3c2e = mol._add_suffix("int3c2e")
                 B = df.incore.aux_e2(mol, fakemol, intor=int3c2e, aosym="s2ij")
-                logger.info(mol, "FastHost: (k|mn) in core, %.0f MB", B.nbytes / 1e6)
+                logger.info(mol, "MoistHost: (k|mn) in core, %.0f MB", B.nbytes / 1e6)
                 self._packed = (key, B, weights)
         _, B, weights = self._packed
         return None if B is None else (B, weights)
@@ -299,8 +300,8 @@ class FastHost(mp.PySCFHost):  # type: ignore[misc]
         return np.ascontiguousarray(grad.T)
 
 
-class FastSolvation(mp.PySCFSolvation):  # type: ignore[misc]
-    """moist.pyscf.PySCFSolvation on a FastHost, with the gradient's one pass up front."""
+class MoistSolvation(mp.PySCFSolvation):  # type: ignore[misc]
+    """moist.pyscf.PySCFSolvation on a MoistHost, with the gradient's one pass up front."""
 
     def __init__(
         self,
@@ -311,7 +312,7 @@ class FastSolvation(mp.PySCFSolvation):  # type: ignore[misc]
         context: Any,
         allow_ecp: bool = False,
     ) -> None:
-        # PySCFSolvation.__init__ with FastHost in place of PySCFHost
+        # PySCFSolvation.__init__ with MoistHost in place of PySCFHost
         if not isinstance(cavity, CavityConfiguration):
             raise TypeError("cavity must be DROP(lsf=...) or ISwiG(...)")
         items = tuple(components)
@@ -321,7 +322,7 @@ class FastSolvation(mp.PySCFSolvation):  # type: ignore[misc]
         self.configuration = cavity
         self.components = items
         self.context = _resolve_context(context)
-        self.host = FastHost(mol, allow_ecp=allow_ecp)
+        self.host = MoistHost(mol, allow_ecp=allow_ecp)
         self.host.structure()
         live = cavity.build(basis=self.host.basis) if cavity.density_dependent else cavity.build()
         self.model = SolvationModel(self.context, live, items)
@@ -349,12 +350,12 @@ class FastSolvation(mp.PySCFSolvation):  # type: ignore[misc]
             self.host.clear_fused()
 
 
-class _FastState(mp._MoistState):  # type: ignore[misc]
-    """moist.pyscf's per-calculation state, driving a FastSolvation."""
+class _MoistSolvationState(mp._MoistState):  # type: ignore[misc]
+    """moist.pyscf's per-calculation state, driving a MoistSolvation."""
 
     # set by _MoistState.reset
     _fingerprint: Any
-    _solvation: FastSolvation | None
+    _solvation: MoistSolvation | None
 
     def __init__(
         self,
@@ -368,7 +369,7 @@ class _FastState(mp._MoistState):  # type: ignore[misc]
         self.allow_ecp = allow_ecp
         super().__init__(mol, cavity=cavity, components=components, context=context)
 
-    def copy(self) -> _FastState:
+    def copy(self) -> _MoistSolvationState:
         return type(self)(
             self.mol,
             cavity=self.cavity,
@@ -377,14 +378,14 @@ class _FastState(mp._MoistState):  # type: ignore[misc]
             allow_ecp=self.allow_ecp,
         )
 
-    def _driver(self) -> FastSolvation:
+    def _driver(self) -> MoistSolvation:
         key = self._molecule_key()
         if self._fingerprint != key:
             self.reset()
         if self._solvation is None:
             if self.mol.has_ecp() and not self.allow_ecp:
                 raise ValueError("effective core potentials are not supported")
-            self._solvation = FastSolvation(
+            self._solvation = MoistSolvation(
                 self.mol,
                 self.cavity,
                 self.components,
@@ -396,9 +397,9 @@ class _FastState(mp._MoistState):  # type: ignore[misc]
 
 
 def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> Any:
-    """MOIST on RHF/RKS/UHF/UKS ``mf``, with FastHost; the SCF is not run.
+    """MOIST on RHF/RKS/UHF/UKS ``mf``, with MoistHost; the SCF is not run.
 
-    moist.pyscf.moist_for_scf with a FastHost, and with ECPs allowed (see the module
+    moist.pyscf.moist_for_scf with a MoistHost, and with ECPs allowed (see the module
     docstring).  When the installed MOIST has an unchecked version of a REPLACED function,
     this is moist_for_scf itself, which refuses ECPs.
     """
@@ -416,7 +417,7 @@ def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> 
         raise NotImplementedError("MOIST supports RHF, RKS, UHF and UKS calculations")
     if getattr(mf, "with_solvent", None) is not None:
         raise ValueError("Cannot attach MOIST to a calculation with an existing solvent")
-    state = _FastState(
+    state = _MoistSolvationState(
         mf.mol, cavity=cavity, components=components, context=context, allow_ecp=True
     )
     obj = mf.copy()

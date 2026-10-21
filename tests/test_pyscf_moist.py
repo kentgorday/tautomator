@@ -1,6 +1,6 @@
-"""tautomator.pyscf_moist's FastHost against MOIST's own PySCF host.
+"""tautomator.pyscf_moist's MoistHost against MOIST's own PySCF host.
 
-Each host routine FastHost replaces is compared with MOIST's at the same input, then whole
+Each host routine MoistHost replaces is compared with MOIST's at the same input, then whole
 SCF and gradient runs with MOIST's PCM models.  Molecules with ECPs, which MOIST's own host
 refuses, are checked against PySCF's PCM on MOIST's surface and against finite differences.
 Runs only where MOIST is installed (the moist pixi environment); to check another MOIST
@@ -32,8 +32,8 @@ from tautomator import pyscf_moist, pyscf_runner  # noqa: E402
 from tautomator.pyscf_moist import (  # noqa: E402
     CHECKED,
     REPLACED,
-    FastHost,
-    FastSolvation,
+    MoistHost,
+    MoistSolvation,
     attach,
     installed_fingerprints,
     rho_drop,
@@ -92,7 +92,7 @@ def _same(a: Any, b: Any) -> None:
 
 @pytest.fixture(autouse=True)
 def _checked(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Treat the installed MOIST as checked, so the tests below compare FastHost with it.
+    """Treat the installed MOIST as checked, so the tests below compare MoistHost with it.
 
     test_replaced_functions_are_checked is the test that it really is.
     """
@@ -100,7 +100,7 @@ def _checked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The moist.pyscf internals FastHost relies on have not changed
+# The moist.pyscf internals MoistHost relies on have not changed
 # ---------------------------------------------------------------------------
 class TestReplacedFunctions:
     @pytest.mark.parametrize("name", REPLACED)
@@ -135,13 +135,13 @@ class TestReplacedFunctions:
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def evaluated() -> dict[str, tuple[Any, Any, Any]]:
-    """(stock solvation, FastSolvation, density) per molecule, evaluated at the density."""
+    """(stock solvation, MoistSolvation, density) per molecule, evaluated at the density."""
     out = {}
     for name, spec in MOLECULES.items():
         mol = _mol(spec)
         dm = _density(mol)
         pair = []
-        for cls in (mp.PySCFSolvation, FastSolvation):
+        for cls in (mp.PySCFSolvation, MoistSolvation):
             s = cls(mol, svdw_drop(), _components("IEF-PCM"), context=CONTEXT)
             s.evaluate(dm)
             pair.append(s)
@@ -153,7 +153,7 @@ class TestHost:
     @pytest.mark.parametrize("name", MOLECULES)
     def test_energy_and_fock(self, evaluated: dict[str, Any], name: str) -> None:
         stock, fast, _ = evaluated[name]
-        assert type(fast.host) is FastHost
+        assert type(fast.host) is MoistHost
         _same(fast.energy, stock.energy)
         _same(fast.fock, stock.fock)
 
@@ -199,7 +199,7 @@ class TestHost:
         dm = _density(mol)
         mol.max_memory = 1  # MB: nothing fits
         stock = mp.PySCFSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT)
-        fast = FastSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT)
+        fast = MoistSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT)
         _same(fast.evaluate(dm).energy, stock.evaluate(dm).energy)
         _same(fast.fock, stock.fock)
         assert fast.host._packed is not None and fast.host._packed[1] is None
@@ -226,7 +226,7 @@ class TestSCF:
             g.verbose = 0
             results.append((e, g.kernel(), type(mf.with_moist)))
         (e0, g0, state0), (e1, g1, state1) = results
-        assert state0 is mp._MoistState and state1 is pyscf_moist._FastState
+        assert state0 is mp._MoistState and state1 is pyscf_moist._MoistSolvationState
         assert abs(e1 - e0) < 1e-9
         np.testing.assert_allclose(g1, g0, atol=1e-8)
 
@@ -237,8 +237,8 @@ class TestSCF:
             components=_components("C-PCM"),
             context=CONTEXT,
         )
-        assert type(mf.copy().with_moist) is pyscf_moist._FastState
-        assert type(mf.as_scanner().with_moist) is pyscf_moist._FastState
+        assert type(mf.copy().with_moist) is pyscf_moist._MoistSolvationState
+        assert type(mf.as_scanner().with_moist) is pyscf_moist._MoistSolvationState
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ class TestECP:
         mol = _mol(ECP_MOLECULE)
         assert mol.has_ecp()
         dm = _density(mol)
-        s = FastSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT, allow_ecp=True)
+        s = MoistSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT, allow_ecp=True)
         energy = s.evaluate(dm).energy
         assert abs(energy - _pyscf_pcm_on(s.model.cavity, mol, dm, monkeypatch)) < 1e-10
 
@@ -290,7 +290,7 @@ class TestECP:
             mf.conv_tol = 1e-12
             mf.max_cycle = 200
             mf.kernel()
-            assert mf.converged and type(mf.with_moist) is pyscf_moist._FastState
+            assert mf.converged and type(mf.with_moist) is pyscf_moist._MoistSolvationState
             return mf
 
         mol = _mol(ECP_MOLECULE)
@@ -314,7 +314,7 @@ class TestECP:
         cavities = []
         for core_fill in (True, False):
             lsf = Isodensity(parameters=IsodensityParameters(core_fill=core_fill))
-            s = FastSolvation(
+            s = MoistSolvation(
                 mol, DROP(lsf=lsf), _components("C-PCM"), context=CONTEXT, allow_ecp=True
             )
             s.evaluate(dm)
@@ -345,7 +345,7 @@ class TestRunner:
     )
     def test_build_mf_attaches_moist(self, model: str, component: Any, lsf: str) -> None:
         _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", model, "water")
-        assert type(mf.with_moist) is pyscf_moist._FastState
+        assert type(mf.with_moist) is pyscf_moist._MoistSolvationState
         assert hasattr(mf, "with_df")  # density fitting underneath, as for PySCF's PCM
         (item,) = mf.with_moist.components
         assert type(item) is component
