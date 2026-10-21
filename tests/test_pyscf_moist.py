@@ -33,7 +33,9 @@ from moist import (
     ModelComponentCPCM,
     ModelComponentIEFPCM,
 )
+from moist.interface import DensityResponse
 from moist.pyscf import DROP, Isodensity
+from pyscf import df as pyscf_df
 from pyscf import dft, gto, scf
 from pyscf.solvent import pcm
 
@@ -99,6 +101,33 @@ def _same(a: Any, b: Any) -> None:
     np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-11)
 
 
+#: The MOIST host routines MoistHost answers itself (for a Gaussian surface)
+OWN_ROUTINES = (
+    "surface_potential",
+    "fock_potential",
+    "_grad_phi_elec",
+    "_gradient_phi",
+    "_dphi_dxi",
+    "_fock_lsf",
+)
+
+
+@pytest.fixture()
+def fell_through(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The MOIST host routines a MoistHost fell through to (its own stock ones are not listed)."""
+    calls: list[str] = []
+    for name in OWN_ROUTINES:
+        stock = getattr(mp.PySCFHost, name)
+
+        def spy(self: Any, *args: Any, _stock: Any = stock, _name: str = name, **kw: Any) -> Any:
+            if isinstance(self, MoistHost):
+                calls.append(_name)
+            return _stock(self, *args, **kw)
+
+        monkeypatch.setattr(mp.PySCFHost, name, spy)
+    return calls
+
+
 @pytest.fixture(autouse=True)
 def _checked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Treat the installed MOIST as checked, so the tests below compare MoistHost with it.
@@ -130,7 +159,8 @@ class TestReplacedFunctions:
             context=CONTEXT,
         )
         assert type(mf.with_moist) is mp._MoistState
-        with pytest.raises(ValueError, match="effective core potentials"):
+        # MOIST's own code would refuse the ECP on every conformer: say why, and what to do
+        with pytest.raises(ValueError, match=r"refuses ECPs.*CHECKED"):
             attach(
                 scf.RHF(_mol(ECP_MOLECULE)),
                 cavity=svdw_drop(),
@@ -152,6 +182,22 @@ def evaluated() -> dict[str, tuple[Any, Any, Any]]:
         pair = []
         for cls in (mp.PySCFSolvation, MoistSolvation):
             s = cls(mol, svdw_drop(), _components("IEF-PCM"), context=CONTEXT)
+            s.evaluate(dm)
+            pair.append(s)
+        out[name] = (pair[0], pair[1], dm)
+    return out
+
+
+@pytest.fixture(scope="module")
+def evaluated_rho() -> dict[str, tuple[Any, Any, Any]]:
+    """As ``evaluated``, on the isodensity cavity, whose response has a density item."""
+    out = {}
+    for name in ("water", "formate"):
+        mol = _mol(MOLECULES[name])
+        dm = _density(mol)
+        pair = []
+        for cls in (mp.PySCFSolvation, MoistSolvation):
+            s = cls(mol, rho_drop(), _components("IEF-PCM"), context=CONTEXT)
             s.evaluate(dm)
             pair.append(s)
         out[name] = (pair[0], pair[1], dm)
@@ -194,6 +240,27 @@ class TestHost:
         finally:
             fast.host.clear_fused()
 
+    @pytest.mark.parametrize("name", MOLECULES)
+    def test_point_derivatives_and_width_derivative(
+        self, evaluated: dict[str, Any], name: str
+    ) -> None:
+        """Outside a gradient: a blocked int3c2e_ip1 pass, and the blocked overlaps."""
+        stock, fast, _ = evaluated[name]
+        cavity = fast.model.cavity
+        coords, xi = cavity.xyz, cavity.xi0
+        assert fast.host._fused is None
+        _same(fast.host._grad_phi_elec(coords, xi), stock.host._grad_phi_elec(coords, xi))
+        _same(fast.host._dphi_dxi(coords, xi), stock.host._dphi_dxi(coords, xi))
+
+    @pytest.mark.parametrize("name", ["water", "formate"])
+    def test_density_response_fock_term(self, evaluated_rho: dict[str, Any], name: str) -> None:
+        stock, fast, _ = evaluated_rho[name]
+        _same(fast.energy, stock.energy)
+        _same(fast.fock, stock.fock)
+        (density,) = [item for item in stock.response if isinstance(item, DensityResponse)]
+        coords = stock.model.cavity.xyz
+        _same(fast.host._fock_lsf(coords, density), stock.host._fock_lsf(coords, density))
+
     @pytest.mark.parametrize("name", ["water", "formate"])
     def test_gradient_channels(self, evaluated: dict[str, Any], name: str) -> None:
         stock, fast, dm = evaluated[name]
@@ -203,16 +270,33 @@ class TestHost:
             _same(b[channel], a[channel])
         assert fast.host._fused is None
 
-    def test_integrals_that_do_not_fit_fall_back(self) -> None:
+    @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
+    def test_integrals_that_do_not_fit_are_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, fell_through: list[str], cavity: Any
+    ) -> None:
+        """Too big to keep: blocks within the budget, never MOIST's one unbounded block."""
         mol = _mol(MOLECULES["formate"])
         dm = _density(mol)
-        mol.max_memory = 1  # MB: nothing fits
-        stock = mp.PySCFSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT)
-        fast = MoistSolvation(mol, svdw_drop(), _components("C-PCM"), context=CONTEXT)
-        _same(fast.evaluate(dm).energy, stock.evaluate(dm).energy)
-        _same(fast.fock, stock.fock)
+        stock = mp.PySCFSolvation(mol, cavity(), _components("C-PCM"), context=CONTEXT)
+        e_stock, f_stock, g_stock = stock.evaluate(dm).energy, stock.fock, stock.gradient(dm)
+        budget = 2e5  # bytes; (k|mn) for formate's surface is some 30x that
+        monkeypatch.setattr(MoistHost, "_budget_bytes", lambda self: budget)
+        blocks: list[int] = []
+        aux_e2 = pyscf_df.incore.aux_e2
+
+        def sized(*args: Any, **kwargs: Any) -> Any:
+            out = aux_e2(*args, **kwargs)
+            blocks.append(out.nbytes)
+            return out
+
+        monkeypatch.setattr(pyscf_df.incore, "aux_e2", sized)
+        fast = MoistSolvation(mol, cavity(), _components("C-PCM"), context=CONTEXT)
+        _same(fast.evaluate(dm).energy, e_stock)
+        _same(fast.fock, f_stock)
+        _same(fast.gradient(dm), g_stock)
         assert fast.host._packed is not None and fast.host._packed[1] is None
-        _same(fast.gradient(dm), stock.gradient(dm))
+        assert len(blocks) > 10 and max(blocks) <= budget
+        assert fell_through == []
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +306,23 @@ class TestSCF:
     @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
     @pytest.mark.parametrize("model", ["C-PCM", "IEF-PCM"])
     @pytest.mark.parametrize("name", ["water", "formate", "methyl"])
-    def test_scf_and_gradient_match_stock(self, name: str, model: str, cavity: Any) -> None:
+    def test_scf_and_gradient_match_stock(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fell_through: list[str],
+        name: str,
+        model: str,
+        cavity: Any,
+    ) -> None:
         mol = _mol(MOLECULES[name])
+        passes: list[int] = []
+        fused_pass = MoistHost.fused_pass
+
+        def counted(self: Any, *args: Any) -> None:
+            passes.append(1)
+            fused_pass(self, *args)
+
+        monkeypatch.setattr(MoistHost, "fused_pass", counted)
         results = []
         for hook in (mp.moist_for_scf, attach):
             base = dft.UKS(mol, xc="b3lyp") if mol.spin else dft.RKS(mol, xc="b3lyp")
@@ -234,6 +333,7 @@ class TestSCF:
             mf.conv_tol_grad = 1e-8
             e = mf.kernel()
             assert mf.converged
+            solvation = mf.with_moist.solvation
             g = mf.nuc_grad_method()
             g.verbose = 0
             results.append((e, g.kernel(), type(mf.with_moist)))
@@ -241,6 +341,12 @@ class TestSCF:
         assert state0 is mp._MoistState and state1 is pyscf_moist._MoistSolvationState
         assert abs(e1 - e0) < 1e-9
         np.testing.assert_allclose(g1, g0, atol=1e-8)
+        # ... and the fast path is what ran: (k|mn) kept, the gradient's one pass, no MOIST
+        # host routine in its place, and no rebuild of the cavity for the gradient
+        assert solvation.host._packed is not None and solvation.host._packed[1] is not None
+        assert len(passes) == 1
+        assert fell_through == []
+        assert mf.with_moist.solvation is solvation
 
     def test_copy_and_scanner_keep_the_fast_host(self) -> None:
         mf = attach(
@@ -386,9 +492,10 @@ class TestRunner:
         _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
         reference = pyscf_runner._run_scf_robust(mf)
         _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
-        mf.max_cycle = 2
+        mf.max_cycle, mf.level_shift = 2, 0.05
         assert pyscf_runner._run_scf_robust(mf) == pytest.approx(reference, abs=1e-7)
-        assert mf.converged and mf.level_shift == 0.0
+        assert mf.converged
+        assert (mf.max_cycle, mf.level_shift) == (2, 0.05)  # the retry's settings undone
 
     def test_no_hessian(self) -> None:
         with pytest.raises(NotImplementedError, match="no Hessian"):

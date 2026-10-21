@@ -8,13 +8,20 @@ answers the same requests sooner, and attach() puts MOIST on a mean field with i
 - SCF: the Coulomb integrals (k|mn) between the AO pairs and the surface's Gaussian charges
   are computed once per surface and kept packed, as FastPCM keeps them, so the potential on
   the surface and the Fock term are BLAS products.  Stock MOIST computes them twice per SCF
-  iteration.  When they don't fit in half the memory left (mol.max_memory), the host falls
-  back to MOIST's own integrals, recomputed per call.
+  iteration, unpacked and in one block.  When they don't fit in half the memory left
+  (mol.max_memory), the host computes them twice per iteration too, but packed and in
+  blocks of BLOCK_BYTES: the SCF then costs about what stock MOIST's does, in bounded memory.
 - Gradient: one blocked pass of int3c2e_ip1 gives both the derivative of the electronic
   potential at each surface point and the AO-centre term, where stock MOIST runs
   int3c2e_ip2 and then int3c2e_ip1 over the whole surface.  The AO-centre term contracts the
   charges of the last response, known before the gradient phase asks for the point
   derivatives, so the pass runs once, up front.
+- Bounded memory everywhere else: every request MOIST's host answers with one unbounded
+  block of integrals over the whole surface (the point derivatives of the potential outside
+  a gradient, its derivative with respect to the Gaussian widths, the Fock term of a surface
+  that follows the density) is answered in blocks of BLOCK_BYTES, with BLAS products where
+  MOIST's host uses einsum.  At def2-QZVPPD on acetaminophen MOIST's own blocks would be
+  6.8 GB (k|mn), 41 GB (point derivatives) and 14 GB (width derivatives).
 - ECPs: moist.pyscf refuses any molecule with an ECP, which rules out vDZP (an ECP on every
   atom but H); attach() allows them.  A geometric cavity (SvdW-, CFC-DROP, iSwiG) needs only
   the elements, and the potential only the ECP-reduced nuclear charges and the valence
@@ -31,7 +38,9 @@ per point (4-6x slower than stock MOIST on drug-sized molecules).
 MoistHost and attach() rely on moist.pyscf internals (REPLACED).  attach() uses them only when
 the installed source of every one matches a MOIST release this module was checked against
 (CHECKED); otherwise it attaches MOIST's own host, at its own speed and with its own ECP
-refusal.  To check a new MOIST: run tests/test_pyscf_moist.py with it, and if MoistHost still
+refusal; it logs a warning saying so, and on a molecule with an ECP (every vDZP job) it
+raises instead of letting every conformer fail on MOIST's refusal.  To check a new MOIST:
+run tests/test_pyscf_moist.py with it, and if MoistHost still
 matches MOIST's host there, add the new fingerprints that test_replaced_functions_are_checked
 prints to CHECKED.
 """
@@ -42,7 +51,7 @@ import functools
 import inspect
 import logging
 import tokenize
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import moist.pyscf as mp
@@ -68,8 +77,10 @@ log = logging.getLogger(__name__)
 #: points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost scales with the points.
 PRUNE_LEVEL = 4
 
-#: Size of one block of derivative integrals in the gradient pass, in bytes (best of 8 MB to
-#: 256 MB on acetaminophen and lidocaine at def2-SVP)
+#: Size of one block of surface integrals, in bytes, wherever they are not kept: libcint fills
+#: blocks this small 2-5x faster per point than one of a few hundred MB (int3c2e_ip1 on
+#: acetaminophen's whole surface: 2.0 s in 16 MB blocks, 9.4 s in one; best of 8 to 256 MB
+#: on acetaminophen and lidocaine at def2-SVP)
 BLOCK_BYTES = 16e6
 
 
@@ -82,8 +93,11 @@ def svdw_drop(**parameters: Any) -> Any:
 def rho_drop(**parameters: Any) -> Any:
     """The isodensity cavity (rho-DROP, MOIST's defaults: rho_iso 1e-3 e/bohr^3), pruned.
 
-    The surface follows the density, so it is rebuilt every SCF iteration and MoistHost's
-    kept (k|mn) is recomputed with it (once per iteration, where MOIST's host does it twice).
+    The surface follows the density, so it is rebuilt every SCF iteration, and every
+    iteration also needs what a fixed surface needs only in the gradient: the derivatives of
+    the potential at the moving points and with respect to their widths, and the Fock term
+    of the surface's own response to the density.  Those, not (k|mn), are what a rho-DROP SCF
+    costs; see the README for how much.
     """
     parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
     return DROP(lsf=Isodensity(), parameters=DROPParameters(**parameters))
@@ -99,6 +113,11 @@ def _replaced() -> dict[str, Callable[..., Any]]:
         "PySCFHost._grad_phi_elec": mp.PySCFHost._grad_phi_elec,
         "PySCFHost.fock_potential": mp.PySCFHost.fock_potential,
         "PySCFHost._gradient_phi": mp.PySCFHost._gradient_phi,
+        "PySCFHost._dphi_dxi": mp.PySCFHost._dphi_dxi,
+        "PySCFHost._fock_lsf": mp.PySCFHost._fock_lsf,
+        "PySCFHost._ao": mp.PySCFHost._ao,
+        "_int3c1e": mp._int3c1e,
+        "_component_index": mp._component_index,
         "PySCFSolvation.__init__": mp.PySCFSolvation.__init__,
         "PySCFSolvation.evaluate": mp.PySCFSolvation.evaluate,
         "PySCFSolvation._answer": mp.PySCFSolvation._answer,
@@ -107,6 +126,7 @@ def _replaced() -> dict[str, Callable[..., Any]]:
         "_MoistState.__init__": mp._MoistState.__init__,
         "_MoistState.copy": mp._MoistState.copy,
         "_MoistState._driver": mp._MoistState._driver,
+        "_MoistState._molecule_key": mp._MoistState._molecule_key,
         "moist_for_scf": mp.moist_for_scf,
     }
 
@@ -123,6 +143,11 @@ CHECKED: dict[str, dict[str, str]] = {
     "PySCFHost._grad_phi_elec": {"ad591f1431834954": "1.1.0a1"},
     "PySCFHost.fock_potential": {"7fa9ed51827b8e71": "1.1.0a1"},
     "PySCFHost._gradient_phi": {"a024fca9455e4579": "1.1.0a1"},
+    "PySCFHost._dphi_dxi": {"f64b07703c729dc9": "1.1.0a1"},
+    "PySCFHost._fock_lsf": {"b223cd2fc52047d6": "1.1.0a1"},
+    "PySCFHost._ao": {"9091301fa653ad09": "1.1.0a1"},
+    "_int3c1e": {"f2a42d138a3e0fde": "1.1.0a1"},
+    "_component_index": {"5812d4d8640965b2": "1.1.0a1"},
     "PySCFSolvation.__init__": {"1a55a55d81f6db79": "1.1.0a1"},
     "PySCFSolvation.evaluate": {"042abd787272eb96": "1.1.0a1"},
     "PySCFSolvation._answer": {"3795f6393aa2008e": "1.1.0a1"},
@@ -131,6 +156,7 @@ CHECKED: dict[str, dict[str, str]] = {
     "_MoistState.__init__": {"fbf20468196806ea": "1.1.0a1"},
     "_MoistState.copy": {"be5a440261f32b5a": "1.1.0a1"},
     "_MoistState._driver": {"901729c736dc61b5": "1.1.0a1"},
+    "_MoistState._molecule_key": {"e5572962cd09b510": "1.1.0a1"},
     "moist_for_scf": {"b7aafec165713d60": "1.1.0a1"},
 }
 
@@ -154,9 +180,9 @@ def unchecked_functions() -> tuple[str, ...]:
     if unchecked:
         import moist
 
-        log.info(
+        log.warning(
             "MOIST %s: %s not among the versions pyscf_moist was checked against; "
-            "using MOIST's own PySCF host",
+            "using MOIST's own PySCF host, which is slower and refuses ECPs (vDZP)",
             moist.__version__,
             ", ".join(unchecked),
         )
@@ -194,8 +220,12 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         """Half the memory mol.max_memory leaves after what the process holds, in bytes."""
         return 0.5 * float(self.mol.max_memory - lib.current_memory()[0]) * 1e6
 
-    def _integrals(self, coords: Array, xi: Array) -> tuple[Array, Array] | None:
-        """(k|mn) packed (npair, npts) and the pair weights, kept per surface; None if too big."""
+    def _blocksize(self, per_point: float) -> int:
+        """Points per block of integrals that are not kept: BLOCK_BYTES, or the budget if less."""
+        return int(max(1, min(BLOCK_BYTES, self._budget_bytes()) // per_point))
+
+    def _integrals(self, coords: Array, xi: Array) -> tuple[Array | None, Array]:
+        """(k|mn) packed (npair, npts), kept per surface (None if too big), and pair weights."""
         key = _key(coords, xi)
         if self._packed is None or self._packed[0] != key:
             mol = self.mol
@@ -204,7 +234,11 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
             self._packed = None  # free the last surface's before sizing this one
             weights = lib.pack_tril(1.0 - 0.5 * np.eye(nao))
             if xi.size * npair * 8 > self._budget_bytes():
-                logger.info(mol, "MoistHost: (k|mn) does not fit; MOIST's own integrals")
+                logger.info(
+                    mol,
+                    "MoistHost: (k|mn) (%.0f MB) does not fit; computed in blocks per use",
+                    xi.size * npair * 8 / 1e6,
+                )
                 self._packed = (key, None, weights)
             else:
                 fakemol = gto.fakemol_for_charges(np.asarray(coords), expnt=np.asarray(xi) ** 2)
@@ -214,20 +248,35 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
                 logger.info(mol, "MoistHost: (k|mn) in core, %.0f MB", B.nbytes / 1e6)
                 self._packed = (key, B, weights)
         _, B, weights = self._packed
-        return None if B is None else (B, weights)
+        return B, weights
+
+    def _coulomb_blocks(self, coords: Array, xi: Array) -> Iterator[tuple[int, int, Array]]:
+        """(p0, p1, (k|mn) packed (npair, p1 - p0)) over the surface, block by block."""
+        mol = self.mol
+        nao = mol.nao
+        int3c2e = mol._add_suffix("int3c2e")
+        for p0, p1 in lib.prange(0, xi.size, self._blocksize(nao * (nao + 1) // 2 * 8)):
+            fakemol = gto.fakemol_for_charges(coords[p0:p1], expnt=xi[p0:p1] ** 2)
+            fakemol.cart = mol.cart
+            yield p0, p1, df.incore.aux_e2(mol, fakemol, intor=int3c2e, aosym="s2ij")
 
     # ------------------------------------------------------------------ SCF
     def surface_potential(self, coords: Array, xi: Array | None = None) -> Array:
-        """The total potential at the surface points: MOIST's, from the kept (k|mn)."""
-        found = None if xi is None else self._integrals(np.asarray(coords), np.asarray(xi))
-        if found is None:
+        """The total potential at the surface points (MOIST's), from (k|mn) kept or blocked."""
+        if xi is None:
             return super().surface_potential(coords, xi)  # type: ignore[no-any-return]
-        B, weights = found
-        coords = np.asarray(coords)
+        coords, xi = np.asarray(coords), np.asarray(xi)
+        B, weights = self._integrals(coords, xi)
         dm = self._density_matrix()
-        electronic = (lib.pack_tril(dm + dm.T) * weights) @ B
+        d = lib.pack_tril(dm + dm.T) * weights
+        if B is not None:
+            electronic = d @ B
+        else:
+            electronic = np.empty(xi.size)
+            for p0, p1, block in self._coulomb_blocks(coords, xi):
+                electronic[p0:p1] = d @ block
         dist = np.linalg.norm(coords[:, None, :] - self.mol.atom_coords()[None], axis=2)
-        width = np.asarray(xi)[:, None]
+        width = xi[:, None]
         # erf(xi r)/r, and its limit 2 xi/sqrt(pi) at r = 0
         kernel = np.divide(
             erf(width * dist),
@@ -238,62 +287,128 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         return kernel @ self.mol.atom_charges() - electronic  # type: ignore[no-any-return]
 
     def fock_potential(self, coords: Array, xi: Array, w_phi: Array) -> Array:
-        """sum_i w_phi_i dphi_i/dP = -sum_i w_phi_i (i|mn), from the kept (k|mn)."""
-        found = self._integrals(np.asarray(coords), np.asarray(xi))
-        if found is None:
-            return super().fock_potential(coords, xi, w_phi)  # type: ignore[no-any-return]
-        B, _ = found
-        return -lib.unpack_tril(B @ np.asarray(w_phi))  # type: ignore[no-any-return]
+        """sum_i w_phi_i dphi_i/dP = -sum_i w_phi_i (i|mn), from (k|mn) kept or blocked."""
+        coords, xi, w = np.asarray(coords), np.asarray(xi), np.asarray(w_phi)
+        B, _ = self._integrals(coords, xi)
+        if B is not None:
+            packed = B @ w
+        else:
+            nao = self.mol.nao
+            packed = np.zeros(nao * (nao + 1) // 2)
+            for p0, p1, block in self._coulomb_blocks(coords, xi):
+                packed += block @ w[p0:p1]
+        return -lib.unpack_tril(packed)  # type: ignore[no-any-return]
+
+    def _dphi_dxi(self, coords: Array, xi: Array) -> Array:
+        """d(potential)/d(Gaussian width) at the points (MOIST's), the overlaps in blocks."""
+        coords, xi = np.asarray(coords), np.asarray(xi)
+        mol = self.mol
+        delta = coords[:, None, :] - mol.atom_coords()[None, :, :]
+        r2 = np.sum(delta * delta, axis=2)
+        nuclear = (2.0 / np.sqrt(np.pi)) * (np.exp(-(xi[:, None] ** 2) * r2) @ mol.atom_charges())
+        dm = self._density_matrix()
+        if not mol.cart:
+            c2s = mol.cart2sph_coeff(normalized="sp")
+            dm = c2s @ dm @ c2s.T
+        ncart = dm.shape[0]
+        d = dm.ravel()
+        electronic = np.empty(xi.size)
+        for p0, p1 in lib.prange(0, xi.size, self._blocksize(ncart * ncart * 8)):
+            # 3-centre overlaps with the unnormalized s probes, (ncart, ncart, p1 - p0)
+            block = mp._int3c1e(mol, coords[p0:p1], xi[p0:p1] ** 2, 0)
+            electronic[p0:p1] = d @ block.reshape(ncart * ncart, p1 - p0)
+        # The unnormalized s probe carries 1/(2 sqrt(pi)) and the kernel derivative 2/sqrt(pi):
+        # MOIST's factor of four
+        return nuclear - 4.0 * electronic  # type: ignore[no-any-return]
+
+    def _fock_lsf(self, coords: Array, density: Any) -> Array:
+        """d rho/dP contracted with the density adjoints (MOIST's), by BLAS, in blocks.
+
+        MOIST's sum of weighted outer products of AO derivative blocks, sum_i w_i L_iu R_iv,
+        each as L^T (w R); the products with the AO values themselves are summed first.
+        """
+        coords = np.asarray(coords)
+        w0 = np.asarray(density.w_rho)
+        w1 = np.asarray(density.w_grad_rho).T  # (3, ngrid)
+        w2 = np.asarray(density.w_hess_rho).T  # (3, 3, ngrid), indexed as MOIST indexes it
+        first = [mp._component_index((a,)) for a in range(3)]
+        second = [[mp._component_index((a, b)) for b in range(3)] for a in range(3)]
+        nao = self.mol.nao
+        fock = np.zeros((nao, nao))
+        half = np.zeros((nao, nao))  # the terms MOIST symmetrises
+        for p0, p1 in lib.prange(0, coords.shape[0], self._blocksize(10 * nao * 8)):
+            ao = self._ao(coords[p0:p1], 2)  # (10, points, nao)
+            a0 = ao[0]
+            fock += a0.T @ (w0[p0:p1, None] * a0)
+            with_a0 = np.zeros_like(a0)
+            for a in range(3):
+                with_a0 += w1[a, p0:p1, None] * ao[first[a]]
+                for b in range(3):
+                    with_a0 += w2[a, b, p0:p1, None] * ao[second[a][b]]
+            half += with_a0.T @ a0
+            for a in range(3):
+                right = sum(w2[a, b, p0:p1, None] * ao[first[b]] for b in range(3))
+                half += ao[first[a]].T @ right
+        return fock + half + half.T
 
     # ------------------------------------------------------------------ gradient
-    def fused_pass(self, coords: Array, xi: Array, q: Array) -> None:
-        """Run the one gradient pass for charges q; _grad_phi_elec and _gradient_phi read it.
+    def _ip1_pass(self, coords: Array, xi: Array, q: Array | None) -> tuple[Array | None, Array]:
+        """One blocked pass of int3c2e_ip1: (sum_i q_i T (3, nao, nao), T . (D + D^T) per point).
 
-        With T = (d_x mu nu|i) from int3c2e_ip1, sum_i q_i T and T . (D + D^T) per point are
-        what the two terms need: for symmetric D, sum_mn D_mn (mn|d i) = -T . (D + D^T).
+        With T = (d_x mu nu|i), those are what the AO-centre term and the point derivatives
+        need: for symmetric D, sum_mn D_mn (mn|d i) = -T . (D + D^T).  Without q, the point
+        derivatives only.
         """
         mol = self.mol
         nao = mol.nao
-        coords, xi, q = np.asarray(coords), np.asarray(xi), np.asarray(q)
         dm = self._density_matrix()
         dsym = (dm + dm.T).ravel()
-        vq = np.zeros((3, nao * nao))
+        vq = None if q is None else np.zeros((3, nao * nao))
         dv = np.empty((3, xi.size))
-        # Small blocks: libcint fills a block of about BLOCK_BYTES 2-5x faster per point than
-        # one of a few hundred MB (2.0 s against 9.4 s for acetaminophen's whole surface)
-        per_point = 3 * nao * nao * 8
-        blksize = int(max(1, min(BLOCK_BYTES, self._budget_bytes()) // per_point))
         intor = mol._add_suffix("int3c2e_ip1")
-        for p0, p1 in lib.prange(0, xi.size, blksize):
+        for p0, p1 in lib.prange(0, xi.size, self._blocksize(3 * nao * nao * 8)):
             fakemol = gto.fakemol_for_charges(coords[p0:p1], expnt=xi[p0:p1] ** 2)
             fakemol.cart = mol.cart
             t = df.incore.aux_e2(mol, fakemol, intor=intor, aosym="s1", comp=3)
             t = t.reshape(3, nao * nao, p1 - p0)
-            vq += t @ q[p0:p1]
+            if vq is not None and q is not None:
+                vq += t @ q[p0:p1]
             dv[:, p0:p1] = dsym @ t
-        self._fused = (_key(coords, xi), q.copy(), vq.reshape(3, nao, nao), dv)
+        return (None if vq is None else vq.reshape(3, nao, nao)), dv
+
+    def fused_pass(self, coords: Array, xi: Array, q: Array) -> None:
+        """Run the gradient's one pass for charges q; _grad_phi_elec and _gradient_phi read it."""
+        coords, xi, q = np.asarray(coords), np.asarray(xi), np.asarray(q)
+        vq, dv = self._ip1_pass(coords, xi, q)
+        assert vq is not None
+        self._fused = (_key(coords, xi), q.copy(), vq, dv)
 
     def clear_fused(self) -> None:
         self._fused = None
 
     def _grad_phi_elec(self, coords: Array, xi: Array | None = None) -> Array:
-        """d(electronic potential)/d(point position), (3, npts): from the fused pass."""
-        f = self._fused
-        if xi is None or f is None or f[0] != _key(np.asarray(coords), np.asarray(xi)):
+        """d(electronic potential)/d(point position), (3, npts): fused pass, or a blocked one."""
+        if xi is None:
             return super()._grad_phi_elec(coords, xi)  # type: ignore[no-any-return]
-        return -f[3]
+        coords, xi = np.asarray(coords), np.asarray(xi)
+        f = self._fused
+        if f is not None and f[0] == _key(coords, xi):
+            return -f[3]
+        return -self._ip1_pass(coords, xi, None)[1]
 
     def _gradient_phi(self, coords: Array, q: Array, xi: Array | None = None) -> Array:
-        """sum_i q_i d(phi_elec)_i/dR_A at fixed points and density, (natm, 3): fused pass."""
-        f = self._fused
-        if (
-            xi is None
-            or f is None
-            or f[0] != _key(np.asarray(coords), np.asarray(xi))
-            or not np.array_equal(np.asarray(q), f[1])
-        ):
+        """sum_i q_i d(phi_elec)_i/dR_A at fixed points and density, (natm, 3)."""
+        if xi is None:
             return super()._gradient_phi(coords, q, xi)  # type: ignore[no-any-return]
-        weighted = 2.0 * np.einsum("xuv,uv->xu", f[2], self._density_matrix())
+        coords, xi, q = np.asarray(coords), np.asarray(xi), np.asarray(q)
+        f = self._fused
+        if f is not None and f[0] == _key(coords, xi) and np.array_equal(q, f[1]):
+            vq = f[2]
+        else:
+            found, _ = self._ip1_pass(coords, xi, q)
+            assert found is not None
+            vq = found
+        weighted = 2.0 * np.einsum("xuv,uv->xu", vq, self._density_matrix())
         grad = np.zeros((3, self.mol.natm))
         for atom, (lo, hi) in enumerate(self._aoslice[:, 2:4]):
             grad[:, atom] = weighted[:, lo:hi].sum(axis=1)
@@ -378,6 +493,24 @@ class _MoistSolvationState(mp._MoistState):  # type: ignore[misc]
             allow_ecp=self.allow_ecp,
         )
 
+    def _molecule_key(self) -> tuple[Any, ...]:
+        """MOIST's key for "same molecule", without the slots that only say where PySCF's
+        one-electron operators were last centred: a gradient moves them (its ECP and
+        nuclear-attraction derivatives), and MOIST would rebuild the cavity and every kept
+        integral for the first gradient after each SCF."""
+        mol = self.mol
+        env = np.array(mol._env, copy=True)
+        env[gto.PTR_COMMON_ORIG : gto.PTR_RINV_ZETA + 1] = 0.0
+        env[gto.AS_RINV_ORIG_ATOM] = 0.0
+        return (
+            mol._atm.tobytes(),
+            mol._bas.tobytes(),
+            env.tobytes(),
+            mol.cart,
+            mol.charge,
+            mol.spin,
+        )
+
     def _driver(self) -> MoistSolvation:
         key = self._molecule_key()
         if self._fingerprint != key:
@@ -406,7 +539,19 @@ def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> 
     from pyscf import scf
     from pyscf.soscf.newton_ah import _CIAH_SOSCF
 
-    if unchecked_functions():
+    unchecked = unchecked_functions()
+    if unchecked:
+        if mf.mol.has_ecp():
+            import moist
+
+            raise ValueError(
+                f"MOIST {moist.__version__} is not a release tautomator.pyscf_moist was "
+                f"checked against ({', '.join(unchecked)} changed), so only MOIST's own PySCF "
+                "code could run, and it refuses ECPs, which this molecule has (vDZP puts one on "
+                "every atom but H).  Run tests/test_pyscf_moist.py in the moist environment; "
+                "if it passes, add the fingerprints it prints to CHECKED in "
+                "tautomator/pyscf_moist.py."
+            )
         return mp.moist_for_scf(mf, cavity=cavity, components=components, context=context)
     # moist_for_scf's checks, without its ECP refusal
     if isinstance(mf, mp._MoistSCF):
