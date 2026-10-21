@@ -2,7 +2,7 @@
 name = "tautomator"
 version = "0.1.0"
 requires-python = ">=3.13"
-license = "Apache-2.0"
+license = "Apache-2.0 AND MPL-2.0"  # MPL-2.0: tautomator/pyscf_moist.py (see NOTICE)
 license-files = ["LICENSE", "NOTICE"]
 
 [build-system]

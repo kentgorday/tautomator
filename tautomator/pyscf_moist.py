@@ -1,3 +1,15 @@
+# Copyright 2026 Lukas Wittmann (MOIST, https://github.com/lukaswittmann/moist).
+# Copyright 2026 Kent Gorday (modifications).
+# SPDX-License-Identifier: MPL-2.0
+#
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a
+# copy of the MPL was not distributed with this file, You can obtain one at
+# https://mozilla.org/MPL/2.0/.
+#
+# Unlike the rest of tautomator (Apache-2.0), this file is under MOIST's license: it adapts
+# code of MOIST's python/moist/pyscf.py (PySCFSolvation.__init__, moist_for_scf and
+# _MoistState, PySCFHost.structure) and follows its host routines closely where it
+# re-implements them; see NOTICE.
 """MOIST's DROP cavities on a PySCF mean field, with FastPCM's integral handling.
 
 MOIST (packages/moist, in the moist pixi environment) builds the cavity, solves the PCM and

@@ -4,6 +4,11 @@ Copyright 2026 Kent Gorday
 Third-party code
 ================
 
+tautomator/pyscf_moist.py adapts code of MOIST (python/moist/pyscf.py,
+https://github.com/lukaswittmann/moist; Lukas Wittmann), Copyright 2026 Lukas
+Wittmann, and is, unlike the rest of tautomator, under MOIST's license, the
+Mozilla Public License, Version 2.0 (https://mozilla.org/MPL/2.0/).
+
 tautomator/pyscf_fast_pcm.py re-implements functions of PySCF
 (pyscf/solvent/pcm.py and pyscf/solvent/grad/pcm.py, https://github.com/pyscf/pyscf;
 Author: Xiaojie Wu <wxj6000@gmail.com>), Copyright 2014-2023 The PySCF

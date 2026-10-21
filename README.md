@@ -662,7 +662,8 @@ What's not yet here:
 
 ## License
 
-Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0, except `tautomator/pyscf_moist.py`, which adapts MOIST's code and is under
+MOIST's MPL-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 That covers tautomator only. Its dependencies are installed separately (pixi
 fetches them from conda-forge and PyPI) and keep their own licenses. Psi4, xtb
