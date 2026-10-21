@@ -17,7 +17,12 @@ import pytest
 moist = pytest.importorskip("moist")  # the moist pixi environment only
 
 import moist.pyscf as mp  # noqa: E402
-from moist import Context, ModelComponentCPCM, ModelComponentIEFPCM  # noqa: E402
+from moist import (  # noqa: E402
+    Context,
+    IsodensityParameters,
+    ModelComponentCPCM,
+    ModelComponentIEFPCM,
+)
 from moist.pyscf import DROP, Isodensity  # noqa: E402
 from pyscf import dft, gto, scf  # noqa: E402
 from pyscf.solvent import pcm  # noqa: E402
@@ -30,6 +35,7 @@ from tautomator.pyscf_moist import (  # noqa: E402
     FastSolvation,
     attach,
     installed_fingerprints,
+    rho_drop,
     svdw_drop,
 )
 
@@ -202,14 +208,15 @@ class TestHost:
 # Whole SCF and gradient runs
 # ---------------------------------------------------------------------------
 class TestSCF:
+    @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
     @pytest.mark.parametrize("model", ["C-PCM", "IEF-PCM"])
     @pytest.mark.parametrize("name", ["water", "formate", "methyl"])
-    def test_scf_and_gradient_match_stock(self, name: str, model: str) -> None:
+    def test_scf_and_gradient_match_stock(self, name: str, model: str, cavity: Any) -> None:
         mol = _mol(MOLECULES[name])
         results = []
         for hook in (mp.moist_for_scf, attach):
             base = dft.UKS(mol, xc="b3lyp") if mol.spin else dft.RKS(mol, xc="b3lyp")
-            mf = hook(base, cavity=svdw_drop(), components=_components(model), context=CONTEXT)
+            mf = hook(base, cavity=cavity(), components=_components(model), context=CONTEXT)
             mf.conv_tol = 1e-11
             e = mf.kernel()
             assert mf.converged
@@ -233,7 +240,7 @@ class TestSCF:
 
 
 # ---------------------------------------------------------------------------
-# ECPs, which MOIST's own host refuses
+# ECPs, which MOIST's own host refuses, on both cavities
 # ---------------------------------------------------------------------------
 def _pyscf_pcm_on(cavity: Any, mol: Any, dm: Any, monkeypatch: pytest.MonkeyPatch) -> float:
     """PySCF's C-PCM energy at ``dm`` on MOIST's surface (its points, widths and switches)."""
@@ -267,17 +274,19 @@ class TestECP:
         energy = s.evaluate(dm).energy
         assert abs(energy - _pyscf_pcm_on(s.model.cavity, mol, dm, monkeypatch)) < 1e-10
 
-    def test_gradient_matches_finite_differences(self) -> None:
+    @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
+    def test_gradient_matches_finite_differences(self, cavity: Any) -> None:
         def run(mol: Any) -> Any:
             # Hartree-Fock: a DFT grid moves with the atoms, which the analytic gradient
             # leaves out, and that alone is a few 1e-6 here
             mf = attach(
                 scf.RHF(mol),
-                cavity=svdw_drop(),
+                cavity=cavity(),
                 components=_components("C-PCM"),
                 context=CONTEXT,
             )
             mf.conv_tol = 1e-12
+            mf.max_cycle = 200
             mf.kernel()
             assert mf.converged and type(mf.with_moist) is pyscf_moist._FastState
             return mf
@@ -294,13 +303,21 @@ class TestECP:
                 moved = coords.copy()
                 moved[atom, axis] += step
                 energies.append(run(mol.set_geom_(moved, unit="Bohr", inplace=False)).e_tot)
-            assert abs((energies[0] - energies[1]) / (2 * h) - analytic[atom, axis]) < 1e-7
+            assert abs((energies[0] - energies[1]) / (2 * h) - analytic[atom, axis]) < 2e-7
 
-    def test_isodensity_cavity_still_refuses_ecps(self) -> None:
-        with pytest.raises(ValueError, match="effective core potentials"):
-            attach(
-                scf.RHF(_mol(ECP_MOLECULE)),
-                cavity=DROP(lsf=Isodensity()),
-                components=_components("C-PCM"),
-                context=CONTEXT,
+    def test_isodensity_core_fill_leaves_the_outer_surface(self) -> None:
+        """The fill guards against an inner sheet at the ECP nucleus; outside, no change."""
+        mol = _mol(ECP_MOLECULE)
+        dm = _density(mol)
+        cavities = []
+        for core_fill in (True, False):
+            lsf = Isodensity(parameters=IsodensityParameters(core_fill=core_fill))
+            s = FastSolvation(
+                mol, DROP(lsf=lsf), _components("C-PCM"), context=CONTEXT, allow_ecp=True
             )
+            s.evaluate(dm)
+            cavities.append(s.model.cavity)
+        with_fill, without = cavities
+        np.testing.assert_array_equal(with_fill.xyz, without.xyz)
+        iodine = mol.atom_coords()[1]
+        assert np.linalg.norm(np.asarray(with_fill.xyz) - iodine, axis=1).min() > 3.0

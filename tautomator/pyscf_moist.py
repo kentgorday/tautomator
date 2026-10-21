@@ -16,10 +16,13 @@ answers the same requests sooner, and attach() puts MOIST on a mean field with i
   charges of the last response, known before the gradient phase asks for the point
   derivatives, so the pass runs once, up front.
 - ECPs: moist.pyscf refuses any molecule with an ECP, which rules out vDZP (an ECP on every
-  atom but H).  A geometric cavity (SvdW-, CFC-DROP, iSwiG) needs only the elements, and
-  the potential only the ECP-reduced nuclear charges and the valence density, as PySCF's
-  own PCM uses them; so attach() allows ECPs on those.  An isodensity cavity built from an
-  ECP pseudo-density needs MOIST's core fill, which is not checked here: refused, as before.
+  atom but H); attach() allows them.  A geometric cavity (SvdW-, CFC-DROP, iSwiG) needs only
+  the elements, and the potential only the ECP-reduced nuclear charges and the valence
+  density, as PySCF's own PCM uses them.  An isodensity cavity is built from the valence
+  pseudo-density, which can fall below the isovalue at an ECP nucleus; MOIST's core fill
+  (on by default) fills it there from the nuclear charges the host reports.  Checked on HI
+  with iodine's def2-SVP ECP: the outer surface is bitwise the same with the fill on and off
+  (its nearest point 4.2 bohr from the iodine), and the gradient matches finite differences.
 
 FastPCM's other gradient trick, int1e_grids_ip under rinv_zeta for the points that share a
 Gaussian width, is not used: DROP gives every point its own width, so it would be one call
@@ -48,7 +51,7 @@ from moist import DROPParameters, Structure
 from moist.configuration import CavityConfiguration
 from moist.context import _resolve_context
 from moist.interface import PotentialAdjointResponse, SolvationModel, SolvationModelComponent
-from moist.pyscf import DROP, SvdW
+from moist.pyscf import DROP, Isodensity, SvdW
 from numpy.typing import NDArray
 from pyscf import df, gto, lib
 from pyscf.lib import logger
@@ -74,6 +77,16 @@ def svdw_drop(**parameters: Any) -> Any:
     """The SvdW-DROP cavity with PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
     parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
     return DROP(lsf=SvdW(), parameters=DROPParameters(**parameters))
+
+
+def rho_drop(**parameters: Any) -> Any:
+    """The isodensity cavity (rho-DROP, MOIST's defaults: rho_iso 1e-3 e/bohr^3), pruned.
+
+    The surface follows the density, so it is rebuilt every SCF iteration and FastHost's
+    kept (k|mn) is recomputed with it (once per iteration, where MOIST's host does it twice).
+    """
+    parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
+    return DROP(lsf=Isodensity(), parameters=DROPParameters(**parameters))
 
 
 def _replaced() -> dict[str, Callable[..., Any]]:
@@ -385,16 +398,16 @@ class _FastState(mp._MoistState):  # type: ignore[misc]
 def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> Any:
     """MOIST on RHF/RKS/UHF/UKS ``mf``, with FastHost; the SCF is not run.
 
-    moist.pyscf.moist_for_scf with a FastHost, and with ECPs allowed on a geometric cavity
-    (see the module docstring).  When the installed MOIST has an unchecked version of a
-    REPLACED function, this is moist_for_scf itself.
+    moist.pyscf.moist_for_scf with a FastHost, and with ECPs allowed (see the module
+    docstring).  When the installed MOIST has an unchecked version of a REPLACED function,
+    this is moist_for_scf itself, which refuses ECPs.
     """
     from pyscf import scf
     from pyscf.soscf.newton_ah import _CIAH_SOSCF
 
     if unchecked_functions():
         return mp.moist_for_scf(mf, cavity=cavity, components=components, context=context)
-    # moist_for_scf's checks, with its ECP refusal narrowed to isodensity cavities
+    # moist_for_scf's checks, without its ECP refusal
     if isinstance(mf, mp._MoistSCF):
         raise ValueError("MOIST is already attached; combine terms in components")
     if isinstance(mf, (scf.rohf.ROHF, _CIAH_SOSCF)) or not isinstance(
@@ -403,11 +416,8 @@ def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> 
         raise NotImplementedError("MOIST supports RHF, RKS, UHF and UKS calculations")
     if getattr(mf, "with_solvent", None) is not None:
         raise ValueError("Cannot attach MOIST to a calculation with an existing solvent")
-    allow_ecp = not cavity.density_dependent
-    if mf.mol.has_ecp() and not allow_ecp:
-        raise ValueError("effective core potentials are not supported on an isodensity cavity")
     state = _FastState(
-        mf.mol, cavity=cavity, components=components, context=context, allow_ecp=allow_ecp
+        mf.mol, cavity=cavity, components=components, context=context, allow_ecp=True
     )
     obj = mf.copy()
     obj.with_moist = state
