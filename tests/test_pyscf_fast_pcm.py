@@ -42,8 +42,7 @@ MOLECULES: dict[str, tuple[str, int, int, str, bool]] = {
         "def2-svp",
         False,
     ),
-    # def2-SVP puts an ECP on iodine
-    "iodomethane": (
+    "iodomethane": (  # iodine gets def2-SVP's ECP from ECPS
         "C 0 0 0; I 0 0 2.14; H 1.03 0 -0.36; H -0.515 0.892 -0.36; H -0.515 -0.892 -0.36",
         0,
         0,
@@ -60,6 +59,9 @@ MOLECULES: dict[str, tuple[str, int, int, str, bool]] = {
     "water": ("O 0 0 0.1173; H 0 0.7572 -0.4692; H 0 -0.7572 -0.4692", 0, 0, "6-31g*", False),
     "water_cart": ("O 0 0 0.1173; H 0 0.7572 -0.4692; H 0 -0.7572 -0.4692", 0, 0, "6-31g*", True),
 }
+# PySCF attaches a basis set's ECP only when asked.  vDZP, tautomator's default basis, puts
+# one on every non-H atom, so at least one molecule here must carry one.
+ECPS: dict[str, dict[str, str]] = {"iodomethane": {"I": "def2-svp"}}
 
 
 def _stock(func: Any, *args: Any) -> Any:
@@ -74,7 +76,10 @@ def _stock(func: Any, *args: Any) -> Any:
 
 def _mol(name: str) -> Any:
     atoms, charge, spin, basis, cart = MOLECULES[name]
-    return gto.M(atom=atoms, charge=charge, spin=spin, basis=basis, cart=cart, verbose=0)
+    ecp = ECPS.get(name, {})
+    mol = gto.M(atom=atoms, charge=charge, spin=spin, basis=basis, ecp=ecp, cart=cart, verbose=0)
+    assert bool(mol.has_ecp()) == bool(ecp), f"{name}: ECP expected {ecp}, got {mol.has_ecp()}"
+    return mol
 
 
 def _solvents(mol: Any, model: str, max_memory: float | None = None) -> tuple[Any, Any]:
