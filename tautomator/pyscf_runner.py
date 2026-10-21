@@ -610,9 +610,12 @@ def _run_scf_robust(mf: Any) -> float:
     if hasattr(mf, "with_moist"):
         log.warning("SCF did not converge; retrying with a level shift (MOIST has no Newton)")
         dm = mf.make_rdm1()
+        settings = mf.level_shift, mf.max_cycle
         mf.level_shift, mf.max_cycle = 0.25, 200
-        energy = mf.kernel(dm0=dm)
-        mf.level_shift = 0.0
+        try:
+            energy = mf.kernel(dm0=dm)
+        finally:
+            mf.level_shift, mf.max_cycle = settings
         if not mf.converged:
             raise RuntimeError("PySCF SCF failed to converge, even with a level shift")
         return float(energy)
@@ -714,6 +717,11 @@ def optimize(
             memory_gb,
         )
         _run_scf_robust(mf_local)
+        # The optimizer works on its own copy (a scanner, with MOIST state of its own), so
+        # this mean field's MOIST state, kept integrals and all, would only take memory
+        # beside the copy's for the whole run.
+        if hasattr(mf_local, "with_moist"):
+            mf_local.with_moist.reset()
         # geom_kernel drives the optimization on a *copy* of the molecule and
         # never writes the final energy back to mf_local, so mf_local.e_tot is
         # stale (it holds the input-geometry SCF energy).  Capture the energy of

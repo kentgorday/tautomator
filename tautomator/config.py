@@ -676,7 +676,7 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
         if scoring.solvent_model.upper().replace("-", "") not in {m.upper() for m in allowed}:
             raise ValueError(
                 f"[scoring] solvent_model = {scoring.solvent_model!r} is not available "
-                f"on the {compute.driver} driver (has: {', '.join(sorted(allowed))})."
+                f"on the {compute.driver} driver (has: {_spelled(allowed)})."
             )
         if drop_solvent_model(scoring.solvent_model) is not None:
             _validate_drop(ref, scoring)
@@ -710,6 +710,16 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
             "Hessian (~6N gradient calculations) -- usually far more than the geometry "
             "optimization itself. rrho = 'xtb' is the default for good reason."
         )
+
+
+def _spelled(models: set[str]) -> str:
+    """Solvent model names as the README spells them, DROP cavities by their pattern."""
+    plain = sorted(m for m in models if "/" not in m)
+    if any("/" in m for m in models):
+        cavities = sorted(set(DROP_CAVITIES.values()), key=str.lower, reverse=True)
+        pcm = "/".join(m for m in plain if m in PCM_METHODS and m != "PCM")
+        plain.append(f"<{pcm}>/<{' or '.join(cavities)}> (e.g. IEFPCM/SvdW-DROP)")
+    return ", ".join(plain)
 
 
 def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig) -> None:

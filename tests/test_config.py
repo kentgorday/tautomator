@@ -1173,8 +1173,11 @@ class TestDropSolventModels:
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match="not available on the pyscf driver"):
+        # spelled as the README spells them, not as the config normalizes them
+        with pytest.raises(ValueError, match="not available on the pyscf driver") as err:
             self._load(tmp_toml, "IEFPCM/sphere-DROP")
+        assert "SvdW-DROP or rho-DROP" in str(err.value)
+        assert "SVDWDROP" not in str(err.value)
 
     def test_needs_moist(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
