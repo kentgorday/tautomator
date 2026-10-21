@@ -44,6 +44,10 @@ build:
       -Ddev_tests=false -Ddocs=false
     - meson compile -C builddir
     - meson install -C builddir --skip-subprojects
+    # The static library, headers and Fortran modules are for linking against MOIST
+    # (46 MB), which nothing here does; the Python package and the moist CLI stay.
+    - rm -rf "$PREFIX/lib/libmoist.a" "$PREFIX/lib/pkgconfig/moist.pc"
+      "$PREFIX/include/moist" "$PREFIX/include/moist.h"
 
 requirements:
   build:

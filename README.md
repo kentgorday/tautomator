@@ -313,6 +313,7 @@ built from source with a backend older pixi cannot run.
 ```bash
 pixi install            # the default environment: everything but Psi4
 pixi install -e psi4    # only for compute.driver = "psi4"
+pixi install -e moist   # experimental: default + MOIST's DROP cavities (compiles MOIST)
 pixi run python scripts/run_pipeline.py examples/glycine_pyscf.toml
 ```
 
@@ -413,6 +414,17 @@ The set of things that look weird and aren't. Read before "fixing":
   conformer in turn. Keep it that way round: don't `import psi4` in tautomator.
   Besides the ABI conflict, running Psi4 as a separate program is what keeps
   tautomator's license independent of Psi4's LGPL-3.0.
+- **MOIST is built from a recipe in this repository** (`packages/moist`), in
+  an experimental `moist` environment: the default environment plus MOIST, in
+  the same solve group, so both have the same versions. MOIST has no
+  conda-forge or PyPI package and no pixi manifest, so `recipe.yaml` pins a
+  MOIST release and the Fortran libraries its meson wraps name, and fetches
+  them as recipe sources (the build itself needs no network). Moving to a new
+  MOIST release means copying the revisions from its `subprojects/*.wrap`
+  too. Those libraries are linked statically into MOIST's Python extension
+  and not installed, so they cannot clash with the `mctc-lib` xtb brings in.
+  The first `pixi install -e moist` compiles MOIST (about 9 minutes on 4
+  cores).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2
