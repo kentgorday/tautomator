@@ -657,3 +657,23 @@ class TestAtom:
 
     def test_an_atom_has_no_frequencies(self) -> None:
         assert frequencies(self.fluoride, -1, "pbe", "sto-3g") == []
+
+
+class TestThreads:
+    def test_numba_takes_the_thread_count(self) -> None:
+        """The nonelectrostatic kernels run on numba's threads: they follow `threads` too."""
+        import numba
+        from pyscf import lib
+
+        atom = Geometry(("F",), np.zeros((1, 3)))
+        most = numba.config.NUMBA_NUM_THREADS  # type: ignore[attr-defined]
+        before = numba.get_num_threads(), lib.num_threads()
+        try:
+            _build_mf(atom, -1, "hf", "sto-3g", threads=1)
+            assert numba.get_num_threads() == 1
+            # More than numba's pool holds is capped, not an error
+            _build_mf(atom, -1, "hf", "sto-3g", threads=most + 1)
+            assert numba.get_num_threads() == most
+        finally:
+            numba.set_num_threads(before[0])
+            lib.num_threads(before[1])

@@ -35,9 +35,11 @@ def _find_resume_point(output_dir: Path, smiles: str) -> tuple[Ensemble, str] | 
     but they are not compared with the current config: resuming after editing
     [refinement], or after one of its defaults changed, silently mixes levels of
     theory.
-    The SMILES check still catches the dangerous case: output directories are
-    numbered by CSV row, so editing the pKa set shifts them and would
-    otherwise resume one molecule's run against another's data.
+    The SMILES check still catches the dangerous case: a directory holding
+    another molecule's run (one from before batch directories were named by
+    ``unique_ID`` alone, whose row numbers shift when the pKa set is edited, or
+    an ID whose SMILES was corrected) would otherwise resume one molecule's run
+    against another's data.
     """
     for stage in _RESUMABLE_STAGES:
         path = output_dir / stage / "ensemble.json"

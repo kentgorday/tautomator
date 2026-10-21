@@ -241,13 +241,17 @@ def interior_kernel_integral(points: Array, surface: Surface, delta: float = DEL
     return kernel_integral(points, surface.coords, surface.normals, surface.areas, delta)
 
 
+def whole_space_kernel_integral(delta: float = DELTA) -> float:
+    """int dr' / (|r - r'|^6 + delta^6) over all of space: 2 pi^2 / (3 delta^3)."""
+    return float(2.0 * np.pi**2 / (3.0 * delta**3))
+
+
 def exterior_kernel_integral(points: Array, surface: Surface, delta: float = DELTA) -> Array:
     """I(r) = int_{r' outside Omega} dr' / (|r - r'|^6 + delta^6).
 
-    All of space gives 2 pi^2 / (3 delta^3); the cavity's share is subtracted.
+    All of space (`whole_space_kernel_integral`) less the cavity's share.
     """
-    whole_space = 2.0 * np.pi**2 / (3.0 * delta**3)
-    return whole_space - interior_kernel_integral(points, surface, delta)
+    return whole_space_kernel_integral(delta) - interior_kernel_integral(points, surface, delta)
 
 
 def dispersion_integral(

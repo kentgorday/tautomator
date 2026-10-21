@@ -49,7 +49,9 @@ from tautomator.pyscf_nonelectrostatic import (
 
 Array = NDArray[np.float64]
 
-# Z-vector convergence: the residual norm relative to the right-hand side.
+# Z-vector convergence: PySCF's Krylov solver stops once its next basis vector is
+# shorter than CPHF_TOL (absolute, in the units of z), and raises RuntimeError if
+# that takes more than CPHF_MAX_CYCLE iterations.
 CPHF_TOL = 1e-10
 CPHF_MAX_CYCLE = 100
 

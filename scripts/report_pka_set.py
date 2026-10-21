@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 from rdkit import Chem
@@ -84,6 +85,18 @@ def _mnsol_ions(path: Path) -> dict[str, set[int]]:
     return ions
 
 
+class _Row(NamedTuple):
+    name: str
+    smiles: str
+    value: PkaValue
+    predicted: float
+    ion_in_mnsol: bool
+
+    @property
+    def error(self) -> float:
+        return self.predicted - self.value.value
+
+
 def _summary(name: str, errors: list[float]) -> str:
     err = np.array(errors)
     return (
@@ -122,7 +135,7 @@ def main() -> None:
         name, _, path = item.partition("=")
         paths[name] = Path(path)
 
-    rows: list[tuple[str, str, PkaValue, float, bool]] = []
+    rows: list[_Row] = []
     for name, path in paths.items():
         if name not in meta:
             continue
@@ -138,43 +151,41 @@ def main() -> None:
             if not len(gas_hi) or not len(gas_lo):
                 continue
             pred = _predict(_free_energy(gas_hi, solv_hi), _free_energy(gas_lo, solv_lo))
-            rows.append((name, smiles, value, pred, bool(ion_charges & {hi, lo})))
+            rows.append(_Row(name, smiles, value, pred, bool(ion_charges & {hi, lo})))
 
     print(
         f"{'molecule':<16}{'SMILES':<24}{'label':<7}{'q':>7}{'pred':>7}{'exp':>7}{'err':>7}"
         f"{'MNSol':>7}"
     )
-    for name, smiles, value, pred, in_mnsol in sorted(
-        rows, key=lambda r: (r[2].label, -abs(r[3] - r[2].value))
-    ):
-        arrow = f"{value.higher_charge:+d}/{value.lower_charge:+d}"
+    for r in sorted(rows, key=lambda r: (r.value.label, -abs(r.error))):
+        arrow = f"{r.value.higher_charge:+d}/{r.value.lower_charge:+d}"
         print(
-            f"{name:<16}{smiles:<24}{value.label:<7}{arrow:>7}"
-            f"{pred:>7.2f}{value.value:>7.2f}{pred - value.value:>+7.2f}"
-            f"{'ion' if in_mnsol else '':>7}"
+            f"{r.name:<16}{r.smiles:<24}{r.value.label:<7}{arrow:>7}"
+            f"{r.predicted:>7.2f}{r.value.value:>7.2f}{r.error:>+7.2f}"
+            f"{'ion' if r.ion_in_mnsol else '':>7}"
         )
 
     print()
-    for label in sorted({r[2].label for r in rows}):
-        sub = [r for r in rows if r[2].label == label]
+    for label in sorted({r.value.label for r in rows}):
+        sub = [r for r in rows if r.value.label == label]
         if len(sub) < 2:
             continue
-        line = _summary(label, [r[3] - r[2].value for r in sub])
+        line = _summary(label, [r.error for r in sub])
         if len(sub) > 2:
-            predicted = np.array([r[3] for r in sub])
-            observed = np.array([r[2].value for r in sub])
+            predicted = np.array([r.predicted for r in sub])
+            observed = np.array([r.value.value for r in sub])
             line += f"  r={np.corrcoef(predicted, observed)[0, 1]:.3f}"
         print(line)
 
     if not rows:
         return
     print()
-    print(_summary("all", [r[3] - r[2].value for r in rows]))
+    print(_summary("all", [r.error for r in rows]))
     if mnsol is None:
         print(f"({args.mnsol_set} not found: no split by MNSol overlap)")
         return
-    for name, keep in (("ion not in MNSol", False), ("ion in MNSol", True)):
-        errors = [r[3] - r[2].value for r in rows if r[4] is keep]
+    for name, in_mnsol in (("ion not in MNSol", False), ("ion in MNSol", True)):
+        errors = [r.error for r in rows if r.ion_in_mnsol == in_mnsol]
         if errors:
             print(_summary(name, errors))
 

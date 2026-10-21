@@ -305,8 +305,10 @@ wB97X and wB97X-3c/vDZP.
 **Self-consistent, PySCF** (`pyscf_nonelectrostatic_scf.enable_self_consistent`):
 the correction joins the PCM solvent object's energy, Fock contribution and
 gradient, so `mf.kernel()`, `mf.nuc_grad_method()`, scanners and geomeTRIC
-include it. Gradients agree with energy differences to 4e-8 Eh/bohr (HF,
-PBE).
+include it. Against central differences of energies at h = 4e-5 bohr
+(`tests/test_pyscf_nonelectrostatic_scf.py`), gradients agree to 1e-7 Eh/bohr
+for HF and 2e-7 for PBE with the grid response; PBE's residual is the
+quadrature's h^2 error, and extrapolating from two steps leaves 1e-8.
 
 **Psi4** (psi4-swig-pcm, `PCMSettings(nonelectrostatic=...)`): the same terms,
 with the field integrals and their second derivatives from libint2. The

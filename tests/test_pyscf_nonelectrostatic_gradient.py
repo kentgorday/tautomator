@@ -8,32 +8,11 @@ import numpy as np
 import pytest
 
 from tautomator import nonelectrostatic
-from tautomator.config import solvent_electron_density
-from tautomator.nonelectrostatic import Params
 from tautomator.pyscf_nonelectrostatic import NonelectrostaticTerms, solute_from_mf
 from tautomator.pyscf_nonelectrostatic_gradient import post_scf_gradient
 from tautomator.pyscf_runner import _build_mf
 from tautomator.types import Geometry
-
-BOHR = 1.8897261246  # bohr per Angstrom
-WATER = solvent_electron_density("water")
-
-# Formate, off its symmetric geometry so that no gradient component vanishes.
-FORMATE = Geometry(
-    symbols=("C", "O", "O", "H"),
-    coords=np.array(
-        [[0.02, -0.03, 0.53], [1.15, -0.03, -0.04], [-1.11, -0.03, -0.04], [0.09, 0.01, 1.67]]
-    ),
-)
-# Magnitudes of the order a fit should give: a few kcal/mol for formate.
-PARAMS = Params(
-    dispersion=-0.004,
-    exchange=0.04,
-    neg_coeff=-0.5,
-    neg_exponent=2.5,
-    pos_coeff=-0.2,
-    pos_exponent=2.0,
-)
+from tests.formate_case import FORMATE, PARAMS, WATER, displaced
 
 
 def _mean_field(geom: Geometry, method: str = "hf", basis: str = "6-31g*") -> tuple[Any, Any]:
@@ -43,17 +22,12 @@ def _mean_field(geom: Geometry, method: str = "hf", basis: str = "6-31g*") -> tu
     # G is not variational in the density, so its finite difference carries the
     # density's residual at first order, divided by the step: at 1e-9 that noise
     # reached the 5e-7 tolerance (HF and wB97X-3c, on linux-64 MKL).  PBE on its
-    # grid cannot converge to 1e-11.
+    # grid cannot converge to 1e-11, and on osx-arm64 takes ~100 cycles to 1e-10.
     mf.conv_tol_grad = 1e-10
+    mf.max_cycle = 200
     mf.kernel()
     assert mf.converged
     return mol, mf
-
-
-def _displaced(geom: Geometry, atom: int, axis: int, step: float) -> Geometry:
-    coords = geom.coords.copy()
-    coords[atom, axis] += step / BOHR
-    return Geometry(geom.symbols, coords)
 
 
 @pytest.fixture(scope="module")
@@ -103,7 +77,7 @@ class TestNonelectrostaticTerms:
             values = []
             for sign in (1.0, -1.0):
                 moved, mf_moved = _build_mf(
-                    _displaced(FORMATE, atom, axis, sign * h),
+                    displaced(FORMATE, atom, axis, sign * h),
                     -1,
                     "hf",
                     "6-31g*",
@@ -130,7 +104,7 @@ def _check_post_scf(method: str, basis: str, coordinates: list[tuple[int, int]])
     for atom, axis in coordinates:
         values = []
         for sign in (1.0, -1.0):
-            moved, mf_moved = _mean_field(_displaced(FORMATE, atom, axis, sign * h), method, basis)
+            moved, mf_moved = _mean_field(displaced(FORMATE, atom, axis, sign * h), method, basis)
             dm = mf_moved.make_rdm1()
             values.append(
                 NonelectrostaticTerms(moved, mf_moved.with_solvent, PARAMS, WATER).energy(dm).total
@@ -165,12 +139,15 @@ class TestPostScfGradient:
         total = post_scf_gradient(mf, terms)
         assert np.abs(total - explicit).max() > 0.5 * np.abs(total).max()
 
-    @pytest.mark.parametrize("xc", ["tpss", "wb97m-v"])
-    def test_refuses_meta_gga_and_vv10(self, xc: str) -> None:
+    # wB97M-V is a meta-GGA, refused before its VV10 is looked at; wB97X-V is a GGA.
+    @pytest.mark.parametrize(
+        ("xc", "reason"), [("tpss", "MGGA"), ("wb97m-v", "MGGA"), ("wb97x-v", "VV10")]
+    )
+    def test_refuses_meta_gga_and_vv10(self, xc: str, reason: str) -> None:
         mol, mf = _build_mf(FORMATE, -1, "pbe", "sto-3g", "IEFPCM", "water")
         mf.verbose = 0
         mf.xc = xc
         mf.converged = True
         terms = NonelectrostaticTerms(mol, mf.with_solvent, PARAMS, WATER)
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(NotImplementedError, match=reason):
             post_scf_gradient(mf, terms)

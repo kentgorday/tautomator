@@ -458,9 +458,14 @@ def _build_mf(
     conventional integrals alike.  On Linux the accounting is real, so the
     same job would likely move the larger DF tensor to disk instead.
     """
+    import numba
     from pyscf import dft, gto, lib
 
     lib.num_threads(threads)
+    # The nonelectrostatic correction's compiled kernels run on numba's own
+    # threads, which would otherwise take every core.
+    most = numba.config.NUMBA_NUM_THREADS  # type: ignore[attr-defined]  # set at import
+    numba.set_num_threads(max(1, min(threads, most)))
 
     resolved_basis, resolved_ecp = _resolve_basis(basis, list(geom.symbols))
 

@@ -9,7 +9,6 @@ from tautomator import cavity_quadrature
 from tautomator.cavity_quadrature import (
     Array,
     Region,
-    becke_partition,
     build_cavity_grid,
     cavity_grid,
     partition_gradient,
@@ -34,15 +33,6 @@ def _tails(points: Array, centres: Array, decay: float) -> Array:
     """Sum of exp(-decay r) on every centre: cusps inside, density-like tails outside."""
     dist = np.linalg.norm(points[:, None, :] - centres[None, :, :], axis=2)
     return np.asarray(np.exp(-decay * dist).sum(axis=1))
-
-
-class TestBeckePartition:
-    def test_rows_sum_to_one_and_nuclei_own_themselves(self) -> None:
-        centres, _radii = CLUSTER
-        points = np.vstack([centres, np.random.default_rng(1).normal(scale=4.0, size=(50, 3))])
-        cells = becke_partition(points, centres)
-        assert cells.sum(axis=1) == pytest.approx(1.0, abs=1e-14)
-        assert np.diag(cells[: len(centres)]) == pytest.approx(1.0, abs=1e-14)
 
 
 class TestCavityGrid:

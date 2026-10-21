@@ -383,21 +383,3 @@ def partition_gradient(
             _n_chunks(len(grid.coords)),
         )
     )
-
-
-def becke_partition(points: Array, atom_coords: Array) -> Array:
-    """Becke's fuzzy-cell weights, shape (n_points, n_atoms); each row sums to 1.
-
-    The plain scheme (JCP 88, 2547 (1988)), with three iterations of the cutoff
-    polynomial and no atomic-size adjustment.
-    """
-    dist = np.linalg.norm(points[:, None, :] - atom_coords[None, :, :], axis=2)
-    cell = np.ones_like(dist)
-    for i in range(len(atom_coords)):
-        for j in range(i):
-            mu = (dist[:, i] - dist[:, j]) / np.linalg.norm(atom_coords[i] - atom_coords[j])
-            for _ in range(3):
-                mu = 1.5 * mu - 0.5 * mu**3
-            cell[:, i] *= 0.5 * (1.0 - mu)
-            cell[:, j] *= 0.5 * (1.0 + mu)
-    return np.asarray(cell / cell.sum(axis=1, keepdims=True))

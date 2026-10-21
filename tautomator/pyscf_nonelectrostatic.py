@@ -61,6 +61,7 @@ from tautomator.nonelectrostatic import (
     dispersion_density,
     exchange_density,
     field_power,
+    whole_space_kernel_integral,
 )
 from tautomator.types import Geometry
 
@@ -231,13 +232,17 @@ def single_point_with_descriptors(
 # The correction as a function of the density matrix
 # ---------------------------------------------------------------------------
 
-# Memory (bytes) one block of basis-function values may take.
+# Memory (bytes) one block of basis-function values or field integrals may take.
 _AO_BLOCK_BYTES = 200e6
 
 
 def _point_blocks(n_points: int, n_values: int) -> list[slice]:
-    """Slices of at most _AO_BLOCK_BYTES worth of n_values float64 per point."""
-    size = max(256, int(_AO_BLOCK_BYTES / (8 * max(1, n_values))))
+    """Slices of at most _AO_BLOCK_BYTES worth of n_values float64 per point.
+
+    No floor above one point: the field integrals take 3 or 9 nao^2 values per
+    point, so at def2-QZVPPD a block holds only a few points.
+    """
+    size = max(1, int(_AO_BLOCK_BYTES / (8 * max(1, n_values))))
     return [slice(p0, min(n_points, p0 + size)) for p0 in range(0, n_points, size)]
 
 
@@ -356,8 +361,7 @@ class NonelectrostaticTerms:
         self.radii = _sphere_radii(mol, ws)
         self.inside = build_cavity_grid(self.centres, self.radii, "inside", *inside_grid)
         self.outside = build_cavity_grid(self.centres, self.radii, "outside", *outside_grid)
-        whole_space = 2.0 * np.pi**2 / (3.0 * delta**3)
-        self.kernel = whole_space - kernel_integral(
+        self.kernel = whole_space_kernel_integral(delta) - kernel_integral(
             self.inside.coords, self.coords, self.normals, self.areas, delta
         )
         self._ao_atom = _ao_atoms(mol)
