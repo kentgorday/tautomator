@@ -220,6 +220,9 @@ class TestSCF:
             base = dft.UKS(mol, xc="b3lyp") if mol.spin else dft.RKS(mol, xc="b3lyp")
             mf = hook(base, cavity=cavity(), components=_components(model), context=CONTEXT)
             mf.conv_tol = 1e-11
+            # the gradient is first order in the orbitals: PySCF's default orbital
+            # threshold (sqrt(conv_tol), 3e-6) leaves two runs ~2e-8 apart
+            mf.conv_tol_grad = 1e-8
             e = mf.kernel()
             assert mf.converged
             g = mf.nuc_grad_method()
