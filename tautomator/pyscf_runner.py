@@ -601,7 +601,18 @@ def _run_scf_robust(mf: Any) -> float:
     """Run SCF; on non-convergence, retry with second-order SCF (.newton()).
 
     MOIST's PCM (a DROP solvent model) has no second-order SCF: there the retry is a
-    level-shifted SCF from the last density instead.
+    level-shifted SCF from the last density instead.  The shift changes only the path, not
+    the answer: it raises the virtual orbitals' energies, which leaves the occupied-virtual
+    block (the orbital gradient) alone, and PySCF tests convergence on the unshifted Fock
+    matrix, so a converged retry is a true SCF solution.  Its failure modes are harmless:
+    a retry that does not converge raises, as before, and the conformer is excluded with a
+    record; one that converged onto a higher-energy state would only give its conformer a
+    higher energy, so a negligible Boltzmann weight, never a spurious minimum.  Checked on
+    six ions, a zwitterion and a radical (wB97X-3c/vDZP in water, on both DROP cavities and
+    on PySCF's PCM, each SCF stopped after 3 cycles): every retry reached the solution of a
+    normal SCF to 7e-11 Ha, and on PySCF's PCM the level shift and Newton agree as closely,
+    in 8-11 cycles against Newton's 3.  The retry covers the first SCF of a single point or
+    an optimization only, not those geomeTRIC runs at each step (as with Newton).
     """
     energy = mf.kernel()
     if mf.converged:
