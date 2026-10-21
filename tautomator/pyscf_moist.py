@@ -352,18 +352,17 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         return fock + half + half.T
 
     # ------------------------------------------------------------------ gradient
-    def _ip1_pass(self, coords: Array, xi: Array, q: Array | None) -> tuple[Array | None, Array]:
+    def _ip1_pass(self, coords: Array, xi: Array, q: Array) -> tuple[Array, Array]:
         """One blocked pass of int3c2e_ip1: (sum_i q_i T (3, nao, nao), T . (D + D^T) per point).
 
         With T = (d_x mu nu|i), those are what the AO-centre term and the point derivatives
-        need: for symmetric D, sum_mn D_mn (mn|d i) = -T . (D + D^T).  Without q, the point
-        derivatives only.
+        need: for symmetric D, sum_mn D_mn (mn|d i) = -T . (D + D^T).
         """
         mol = self.mol
         nao = mol.nao
         dm = self._density_matrix()
         dsym = (dm + dm.T).ravel()
-        vq = None if q is None else np.zeros((3, nao * nao))
+        vq = np.zeros((3, nao * nao))
         dv = np.empty((3, xi.size))
         intor = mol._add_suffix("int3c2e_ip1")
         for p0, p1 in lib.prange(0, xi.size, self._blocksize(3 * nao * nao * 8)):
@@ -371,16 +370,14 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
             fakemol.cart = mol.cart
             t = df.incore.aux_e2(mol, fakemol, intor=intor, aosym="s1", comp=3)
             t = t.reshape(3, nao * nao, p1 - p0)
-            if vq is not None and q is not None:
-                vq += t @ q[p0:p1]
+            vq += t @ q[p0:p1]
             dv[:, p0:p1] = dsym @ t
-        return (None if vq is None else vq.reshape(3, nao, nao)), dv
+        return vq.reshape(3, nao, nao), dv
 
     def fused_pass(self, coords: Array, xi: Array, q: Array) -> None:
         """Run the gradient's one pass for charges q; _grad_phi_elec and _gradient_phi read it."""
         coords, xi, q = np.asarray(coords), np.asarray(xi), np.asarray(q)
         vq, dv = self._ip1_pass(coords, xi, q)
-        assert vq is not None
         self._fused = (_key(coords, xi), q.copy(), vq, dv)
 
     def clear_fused(self) -> None:
@@ -394,7 +391,26 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         f = self._fused
         if f is not None and f[0] == _key(coords, xi):
             return -f[3]
-        return -self._ip1_pass(coords, xi, None)[1]
+        return self._point_derivatives(coords, xi)
+
+    def _point_derivatives(self, coords: Array, xi: Array) -> Array:
+        """sum_mn D_mn (mn|d i) per point (MOIST's int3c2e_ip2 contraction), packed, in blocks.
+
+        The derivative falls on the surface Gaussian, so (mn|d i) is symmetric in m, n and is
+        computed packed: half the integrals of an int3c2e_ip1 pass (0.9 s against 1.9 s on
+        acetaminophen's surface at def2-SVP).  Every rho-DROP SCF iteration needs it.
+        """
+        mol = self.mol
+        nao = mol.nao
+        dm = self._density_matrix()
+        d = lib.pack_tril(dm + dm.T) * lib.pack_tril(1.0 - 0.5 * np.eye(nao))
+        out = np.empty((3, xi.size))
+        intor = mol._add_suffix("int3c2e_ip2")
+        for p0, p1 in lib.prange(0, xi.size, self._blocksize(3 * nao * (nao + 1) // 2 * 8)):
+            fakemol = gto.fakemol_for_charges(coords[p0:p1], expnt=xi[p0:p1] ** 2)
+            fakemol.cart = mol.cart
+            out[:, p0:p1] = d @ df.incore.aux_e2(mol, fakemol, intor=intor, aosym="s2ij", comp=3)
+        return out
 
     def _gradient_phi(self, coords: Array, q: Array, xi: Array | None = None) -> Array:
         """sum_i q_i d(phi_elec)_i/dR_A at fixed points and density, (natm, 3)."""
@@ -405,9 +421,7 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         if f is not None and f[0] == _key(coords, xi) and np.array_equal(q, f[1]):
             vq = f[2]
         else:
-            found, _ = self._ip1_pass(coords, xi, q)
-            assert found is not None
-            vq = found
+            vq, _ = self._ip1_pass(coords, xi, q)
         weighted = 2.0 * np.einsum("xuv,uv->xu", vq, self._density_matrix())
         grad = np.zeros((3, self.mol.natm))
         for atom, (lo, hi) in enumerate(self._aoslice[:, 2:4]):

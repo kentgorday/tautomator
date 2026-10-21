@@ -199,8 +199,23 @@ score. All three drivers implement the same three operations (`single_point`,
   nonelectrostatic descriptors yet, and ignore `pcm_hydrogen_radius`, a
   setting of PySCF's cavity (so a value other than 1.1 is refused). MOIST
   solves the PCM; tautomator's own code supplies its integrals, as FastPCM
-  keeps them: an IEF-PCM SvdW-DROP energy and gradient costs 1.3-1.4x the
-  gas-phase job, against 3.1-3.5x with MOIST's own PySCF code.
+  keeps them, and in bounded memory. An IEF-PCM energy and gradient on
+  acetaminophen (wB97X/def2-SVP, 4 threads), against the gas-phase job:
+
+  | | tautomator | MOIST's own PySCF code |
+  |---|---|---|
+  | SvdW-DROP, surface integrals kept | 1.25x | 2.9x |
+  | SvdW-DROP, too big to keep | 1.7x | 2.9x, in one unbounded block |
+  | rho-DROP | 3.0x | 6.6x |
+
+  The surface integrals are kept, as with FastPCM, while they fit in half of
+  what `[compute] memory_gb` leaves; otherwise they are recomputed in blocks
+  twice per SCF iteration, as MOIST's own code does but in bounded memory
+  (its one block for acetaminophen at def2-QZVPPD would be 13.7 GB). rho-DROP
+  costs more whether or not they fit: its surface moves every SCF iteration,
+  so every iteration also needs the derivatives of the potential at the moved
+  points and with respect to their Gaussian widths, which a fixed surface
+  needs only in the gradient.
 - **`"psi4"`.** Subprocess driver, writes input decks and parses output. The
   `psi4` executable comes from a pixi environment of its own
   (`pixi install -e psi4`); tautomator never imports Psi4. Implicit solvent
