@@ -141,11 +141,14 @@ gcp-correction = ">=2.3.2,<3"
 libblas = { version = "*", build = "*_newaccelerate" }
 
 # MOIST (experimental): its SvdW-DROP and isodensity (rho-DROP) cavities, as the cavity
-# for PySCF's PCM and the nonelectrostatic correction.  Built from source by pixi-build
-# (packages/moist: a rattler-build recipe pinned to a MOIST release); an environment of
-# its own until it is used by tautomator itself.
+# for PySCF's PCM and the nonelectrostatic correction.  Built from source by pixi-build,
+# from the recipe in psi4-swig-pcm's repository (packages/moist: pinned to a MOIST
+# release), which psi4-swig-pcm builds its own moist environment from too: one recipe for
+# both.  Only the recipe comes from there; no Psi4 comes with it.  The commit is pinned in
+# pixi.lock, and `pixi update moist` moves it.  An environment of its own until it is used
+# by tautomator itself.
 [feature.moist.dependencies]
-moist = { path = "packages/moist" }
+moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", subdirectory = "packages/moist" }
 
 [environments]
 default = { solve-group = "default" }

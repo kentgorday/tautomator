@@ -431,21 +431,20 @@ The set of things that look weird and aren't. Read before "fixing":
   conformer in turn. Keep it that way round: don't `import psi4` in tautomator.
   Besides the ABI conflict, running Psi4 as a separate program is what keeps
   tautomator's license independent of Psi4's LGPL-3.0.
-- **MOIST is built from a recipe in this repository** (`packages/moist`), in
-  an experimental `moist` environment: the default environment plus MOIST, in
-  the same solve group, so both have the same versions. MOIST has no
-  conda-forge or PyPI package and no pixi manifest, so `recipe.yaml` pins a
-  MOIST release and the Fortran libraries its meson wraps name, and fetches
-  them as recipe sources (the build itself needs no network). Moving to a new
-  MOIST release means copying the revisions from its `subprojects/*.wrap`
-  too. Those libraries are linked statically into MOIST's Python extension
-  and not installed, so they cannot clash with the `mctc-lib` xtb brings in.
-  The recipe builds against the netlib variants of `libblas`/`liblapack`, as
-  conda-forge's own builds do; keep it that way. In the OpenBLAS variants,
-  which the solver otherwise picks for a build, both are links to
-  `libopenblas`, so MOIST would load only where OpenBLAS is installed, not
-  beside MKL (linux-64) or Accelerate (osx-arm64). The first
-  `pixi install -e moist` compiles MOIST (about 9 minutes on 4 cores).
+- **MOIST comes from psi4-swig-pcm's repository**, in an experimental `moist`
+  environment: the default environment plus MOIST, in the same solve group, so
+  both have the same versions. There is no Psi4 in it: MOIST has no conda-forge
+  or PyPI package, and the rattler-build recipe that builds it lives in
+  psi4-swig-pcm (`packages/moist`), so that both repositories build MOIST from
+  one recipe. `pixi.lock` pins the commit, as for `psi4-swig-pcm` itself, and
+  `pixi update moist` moves it. Change the recipe there, not here; its README
+  ("The moist package") lists what it must keep for tautomator: the same
+  Python; BLAS/LAPACK from the environment (MKL on linux-64, Accelerate on
+  osx-arm64), by building against the netlib variants of `libblas`/`liblapack`;
+  and MOIST's Fortran libraries linked statically into its extension and not
+  installed, so they cannot clash with the `mctc-lib` xtb brings in. Its
+  `tests/test_moist_build.py` checks the build. The first `pixi install -e
+  moist` compiles MOIST (about 9 minutes on 4 cores).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2
