@@ -26,6 +26,8 @@ module = [
     "cached_path",
     "geometric",
     "geometric.*",
+    "moist",
+    "moist.*",
 ]
 ignore_missing_imports = true
 
