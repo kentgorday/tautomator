@@ -235,10 +235,11 @@ score. All three drivers implement the same three operations (`single_point`,
   environment. Psi4 takes its frequencies as finite differences of the
   analytical gradients, so on this driver `rrho = "refinement"` works in
   MOIST's PCM too (at ~6N gradients per Hessian, as in any Psi4 PCM).
-  `pcm_hydrogen_radius` is refused as on PySCF. psi4-swig-pcm's MOIST host
-  matches MOIST's own PySCF code to 5e-12 Eh; an energy and gradient costs
-  1.2x the gas-phase job on SvdW-DROP and 5.2x on rho-DROP (its figures:
-  glycine zwitterion, PBE0/def2-TZVP, 4 threads).
+  `pcm_hydrogen_radius` is refused as on PySCF. Solvation energies match
+  PySCF's on the same model to <1e-8 kcal/mol (formate, HF/def2-SVP, SvdW- and
+  rho-DROP). A wB97X-3c/vDZP single point on acetaminophen (4 threads) costs
+  1.17x the gas-phase job on SvdW-DROP and 3.9x on rho-DROP, against 1.13x and
+  3.7x on PySCF.
   Offers all five 3c composites (wB97X-3c, r2SCAN-3c, B97-3c, PBEh-3c, HF-3c).
 - **OrbMol-v2 (refinement only).** The machine-learned potential from
   orb-models (Apache-2.0 code and weights), trained on gas-phase

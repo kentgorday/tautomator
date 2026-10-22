@@ -537,7 +537,8 @@ def test_drop_solvation_energy_matches_pyscf(isolated_tmpdir: Path, model: str) 
         e_gas = driver.single_point(_formate(), -1, *level, threads=4)
         solvation[name] = (e_pcm - e_gas) * 627.509474
     assert solvation["psi4"] < -60.0  # an anion in water
-    assert abs(solvation["psi4"] - solvation["pyscf"]) < 1e-3, solvation
+    # measured < 5e-9 kcal/mol on SvdW-DROP and rho-DROP
+    assert abs(solvation["psi4"] - solvation["pyscf"]) < 1e-6, solvation
 
 
 @pytest.mark.slow
