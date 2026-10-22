@@ -16,7 +16,7 @@ import logging
 from types import ModuleType
 
 from tautomator import xtb_runner
-from tautomator.config import DEFAULT_MEMORY_GB, RefinementConfig
+from tautomator.config import DEFAULT_MEMORY_GB, RefinementConfig, drop_solvent_model
 from tautomator.ensemble import (
     HARTREE_TO_KCAL,
     _effective_energy,
@@ -30,14 +30,17 @@ from tautomator.types import ChargeState, Ensemble, ExcludedConformer, Exclusion
 log = logging.getLogger(__name__)
 
 
-def _get_driver(name: str) -> ModuleType:
-    """Return the refinement driver module for the given name."""
+def _get_driver(name: str, *, moist: bool = False) -> ModuleType:
+    """Return the refinement driver module for the given name.
+
+    moist: the run is on a MOIST cavity; for Psi4 that needs the psi4-moist environment.
+    """
     if name == "psi4":
         from tautomator import psi4_runner
 
         # Outside the per-conformer handlers, which would record a missing
         # Psi4 as each conformer's own failure.
-        psi4_runner.psi4_executable()
+        psi4_runner.psi4_executable(moist=moist)
         return psi4_runner
     if name == "pyscf":
         from tautomator import pyscf_runner
@@ -73,8 +76,14 @@ def refine(
 
     Modifies the ensemble in-place and returns it.
     """
-    engine = _get_driver(config.engine)
-    dft = _get_driver(driver)
+    # A DROP solvent model runs Psi4 from the psi4-moist environment.
+    moist = (
+        config.solvation != "none"
+        and solvent_model is not None
+        and drop_solvent_model(solvent_model) is not None
+    )
+    engine = _get_driver(config.engine, moist=moist)
+    dft = _get_driver(driver, moist=moist)
     if config.engine == "orbmol":
         # Outside the per-conformer handlers below, which would record a model
         # that cannot be loaded as each conformer's own optimization failure.

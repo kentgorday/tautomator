@@ -103,7 +103,7 @@ def patch_drivers(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     def install(engine: FakeDriver, dft: FakeDriver | None = None) -> None:
         table = {"orbmol": engine, "pyscf": dft or engine, "psi4": dft or engine}
-        monkeypatch.setattr(refinement, "_get_driver", lambda name: table[name])
+        monkeypatch.setattr(refinement, "_get_driver", lambda name, **_: table[name])
 
     return install
 

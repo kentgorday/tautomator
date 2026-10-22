@@ -1087,7 +1087,7 @@ class TestNonelectrostaticDescriptors:
 
 
 class TestDropSolventModels:
-    """MOIST's DROP cavities as solvent models "<PCM model>/<cavity>" (PySCF only)."""
+    """MOIST's DROP cavities as solvent models "<PCM model>/<cavity>", on either driver."""
 
     @pytest.fixture()
     def moist_installed(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
@@ -1162,12 +1162,41 @@ class TestDropSolventModels:
         assert config.refinement.solvation == "optimize"  # MOIST has analytical gradients
         assert config.provenance()["scoring"]["solvent_model"] == model
 
-    def test_not_on_psi4(
+    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "CPCM/rho-DROP"])
+    def test_accepted_on_psi4_without_moist_here(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        model: str,
+    ) -> None:
+        # Psi4 imports MOIST in the psi4-moist environment, not in this one
+        moist_installed(False)
+        config = self._load(tmp_toml, model, driver="psi4")
+        assert config.scoring.solvent_model == model
+        assert config.refinement.solvation == "optimize"
+
+    def test_hessian_in_solvent_on_psi4(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:
-        moist_installed(True)
-        with pytest.raises(ValueError, match="not available on the psi4 driver"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP", driver="psi4")
+        # Psi4's frequencies are finite differences of MOIST's analytical gradients
+        moist_installed(False)
+        config = self._load(
+            tmp_toml, "IEFPCM/SvdW-DROP", driver="psi4", refinement='rrho = "refinement"'
+        )
+        assert config.refinement.rrho == "refinement"
+        assert config.refinement.solvation == "optimize"
+
+    def test_hydrogen_radius_refused_on_psi4_too(
+        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    ) -> None:
+        moist_installed(False)
+        with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
+            self._load(
+                tmp_toml,
+                "IEFPCM/rho-DROP",
+                driver="psi4",
+                scoring="pcm_hydrogen_radius = 1.2",
+            )
 
     def test_unknown_cavity(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]

@@ -186,7 +186,8 @@ score. All three drivers implement the same three operations (`single_point`,
   available; on Linux it can, so the limit there is lower.
 
   The same PCM models also run on MOIST's DROP cavities
-  (`tautomator/pyscf_moist.py`), in the experimental `moist` environment
+  (`tautomator/pyscf_moist.py`; on the psi4 driver too, see below), in the
+  experimental `moist` environment
   (`pixi install -e moist`, then `pixi run -e moist ...`): `solvent_model =
   "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and cavity `SvdW-DROP`
   (a smooth solvent-excluded-like surface over MOIST's CPCM radii) or
@@ -224,6 +225,20 @@ score. All three drivers implement the same three operations (`single_point`,
   ISWIG switching, radii and models) with analytical gradients, so Psi4
   minimizes in solvent too, and its solvation energies match PySCF's to
   <1e-5 kcal/mol at the same level.
+
+  The DROP solvent models (`"<model>/<cavity>"`, as for PySCF above) run
+  through psi4-swig-pcm's MOIST host, with the same cavities and pruning as
+  on PySCF. Those jobs launch the Psi4 of a `psi4-moist` environment
+  (`pixi install -e psi4-moist`, which compiles MOIST); the gas-phase and
+  plain-PCM jobs keep the `psi4` environment's, the same Psi4 (one solve
+  group). tautomator itself needs no MOIST then: run from the default
+  environment. Psi4 takes its frequencies as finite differences of the
+  analytical gradients, so on this driver `rrho = "refinement"` works in
+  MOIST's PCM too (at ~6N gradients per Hessian, as in any Psi4 PCM).
+  `pcm_hydrogen_radius` is refused as on PySCF. psi4-swig-pcm's MOIST host
+  matches MOIST's own PySCF code to 5e-12 Eh; an energy and gradient costs
+  1.2x the gas-phase job on SvdW-DROP and 5.2x on rho-DROP (its figures:
+  glycine zwitterion, PBE0/def2-TZVP, 4 threads).
   Offers all five 3c composites (wB97X-3c, r2SCAN-3c, B97-3c, PBEh-3c, HF-3c).
 - **OrbMol-v2 (refinement only).** The machine-learned potential from
   orb-models (Apache-2.0 code and weights), trained on gas-phase
@@ -346,6 +361,7 @@ built from source with a backend older pixi cannot run.
 pixi install            # the default environment: everything but Psi4
 pixi install -e psi4    # only for compute.driver = "psi4"
 pixi install -e moist   # experimental: default + MOIST's DROP cavities (compiles MOIST)
+pixi install -e psi4-moist  # experimental: Psi4 + MOIST, for DROP models on the psi4 driver
 pixi run python scripts/run_pipeline.py examples/glycine_pyscf.toml
 ```
 
@@ -459,7 +475,11 @@ The set of things that look weird and aren't. Read before "fixing":
   and MOIST's Fortran libraries linked statically into its extension and not
   installed, so they cannot clash with the `mctc-lib` xtb brings in. Its
   `tests/test_moist_build.py` checks the build. The first `pixi install -e
-  moist` compiles MOIST (about 9 minutes on 4 cores).
+  moist` compiles MOIST (about 9 minutes on 4 cores). The `psi4-moist`
+  environment is the `psi4` one plus MOIST, in the psi4 solve group: a
+  solvation energy on the psi4 driver subtracts a gas-phase energy from the
+  `psi4` environment's Psi4 from a solvated one from `psi4-moist`'s, so the two
+  must be the same build. It compiles MOIST once more (for Psi4's solve group).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2

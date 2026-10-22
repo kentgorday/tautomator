@@ -78,16 +78,15 @@ from pyscf import df, gto, lib
 from pyscf.lib import logger
 from scipy.special import erf
 
+from tautomator.config import DROP_PRUNE_LEVEL
 from tautomator.pyscf_fast_pcm import fingerprint
 
 Array = NDArray[np.float64]
 
 log = logging.getLogger(__name__)
 
-#: MOIST's smooth pruning of near-zero quadrature weights (DROPParameters.wleb_prune_level):
-#: 4 suppresses weights below 1e-6 to 1e-4.  On acetaminophen it drops 14% of the SvdW-DROP
-#: points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost scales with the points.
-PRUNE_LEVEL = 4
+#: MOIST's smooth pruning of near-zero quadrature weights (config.DROP_PRUNE_LEVEL says why).
+PRUNE_LEVEL = DROP_PRUNE_LEVEL
 
 #: Size of one block of surface integrals, in bytes, wherever they are not kept: libcint fills
 #: blocks this small 2-5x faster per point than one of a few hundred MB (int3c2e_ip1 on

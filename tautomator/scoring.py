@@ -15,6 +15,7 @@ from tautomator.cavity_quadrature import INSIDE_GRID, OUTSIDE_GRID
 from tautomator.config import (
     DEFAULT_MEMORY_GB,
     PCM_SWITCHING,
+    drop_solvent_model,
     solvent_dielectric,
     solvent_electron_density,
 )
@@ -25,14 +26,17 @@ from tautomator.types import Ensemble, ExcludedConformer
 log = logging.getLogger(__name__)
 
 
-def _get_driver(name: str) -> ModuleType:
-    """Return the DFT driver module for the given name."""
+def _get_driver(name: str, *, moist: bool = False) -> ModuleType:
+    """Return the DFT driver module for the given name.
+
+    moist: the run is on a MOIST cavity; for Psi4 that needs the psi4-moist environment.
+    """
     if name == "psi4":
         from tautomator import psi4_runner
 
         # Outside the per-conformer handlers, which would record a missing
         # Psi4 as each conformer's own failure.
-        psi4_runner.psi4_executable()
+        psi4_runner.psi4_executable(moist=moist)
         return psi4_runner
     if name == "pyscf":
         from tautomator import pyscf_runner
@@ -77,7 +81,13 @@ def score(
 
     Modifies the ensemble in-place and returns it.
     """
-    driver = _get_driver(driver_name)
+    # A DROP solvent model runs Psi4 from the psi4-moist environment.
+    moist = (
+        solvent_model is not None
+        and solvent is not None
+        and drop_solvent_model(solvent_model) is not None
+    )
+    driver = _get_driver(driver_name, moist=moist)
     if descriptors_path is not None:
         if driver_name != "pyscf" or solvent_model is None or solvent is None:
             raise ValueError(

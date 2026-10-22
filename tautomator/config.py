@@ -142,17 +142,25 @@ PCM_METHODS: dict[str, str] = {
     "COSMO": "COSMO",
 }
 
-# MOIST's DROP cavities (tautomator.pyscf_moist), for the same PCM models: a
-# solvent model "<model>/<cavity>", e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth
-# solvent-excluded-like surface over MOIST's CPCM radii, rho-DROP the electron
-# isodensity surface (rho_iso = 1e-3 e/bohr^3), which follows the density through
-# the SCF.  PySCF driver only, in the moist pixi environment.  Normalized name
-# (upper case, no hyphens) -> MOIST's name.
+# MOIST's DROP cavities, for the same PCM models: a solvent model "<model>/<cavity>",
+# e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth solvent-excluded-like surface over
+# MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
+# e/bohr^3), which follows the density through the SCF.  On the pyscf driver
+# (tautomator.pyscf_moist) they need the moist pixi environment; on the psi4 driver
+# (psi4-swig-pcm's MOIST host) the psi4-moist one, which psi4_runner launches Psi4
+# from.  Normalized name (upper case, no hyphens) -> MOIST's name.
 DROP_CAVITIES: dict[str, str] = {
     "SVDWDROP": "SvdW-DROP",
     "RHODROP": "rho-DROP",
     "ISODENSITYDROP": "rho-DROP",
 }
+
+
+#: MOIST's smooth pruning of near-zero quadrature weights (DROPParameters.wleb_prune_level),
+#: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  On acetaminophen it drops 14%
+#: of the SvdW-DROP points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost
+#: scales with the points.
+DROP_PRUNE_LEVEL = 4
 
 
 def drop_solvent_model(model: str) -> tuple[str, str] | None:
@@ -189,7 +197,10 @@ _SOLVENT_MODELS: dict[str, set[str]] = {
         "DDCOSMO",
         *(f"{pcm}/{cavity}" for pcm in PCM_METHODS for cavity in DROP_CAVITIES),
     },
-    "psi4": set(PCM_METHODS),
+    "psi4": {
+        *PCM_METHODS,
+        *(f"{pcm}/{cavity}" for pcm in PCM_METHODS for cavity in DROP_CAVITIES),
+    },
 }
 
 # Dielectric constants for the PCM models, by lower-case solvent name; both
@@ -679,7 +690,7 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 f"on the {compute.driver} driver (has: {_spelled(allowed)})."
             )
         if drop_solvent_model(scoring.solvent_model) is not None:
-            _validate_drop(ref, scoring)
+            _validate_drop(ref, scoring, compute.driver)
 
     if scoring.nonelectrostatic_descriptors:
         if compute.driver != "pyscf":
@@ -722,12 +733,14 @@ def _spelled(models: set[str]) -> str:
     return ", ".join(plain)
 
 
-def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig) -> None:
+def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -> None:
     """What a MOIST DROP cavity (solvent_model "<model>/<cavity>") cannot do."""
     import importlib.util
 
     model = scoring.solvent_model
-    if importlib.util.find_spec("moist") is None:
+    # On the psi4 driver MOIST is imported by Psi4, in its own environment, which
+    # psi4_runner.psi4_executable(moist=True) checks for when the run picks its driver.
+    if driver == "pyscf" and importlib.util.find_spec("moist") is None:
         raise ValueError(
             f"[scoring] solvent_model = {model!r} needs MOIST, which is installed only in "
             "the moist pixi environment: `pixi install -e moist` (it compiles MOIST), then "
@@ -739,14 +752,17 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig) -> None:
     ):
         if radius != 1.1:
             raise ValueError(
-                f"{name} pcm_hydrogen_radius = {radius} sets the hydrogen radius of PySCF's "
-                f"own PCM cavity; solvent_model = {model!r} builds MOIST's cavity, with "
-                "MOIST's radii. Remove it."
+                f"{name} pcm_hydrogen_radius = {radius} sets the hydrogen radius of the "
+                f"switching/Gaussian PCM cavity; solvent_model = {model!r} builds MOIST's "
+                "cavity, with MOIST's radii. Remove it."
             )
-    if ref.rrho == "refinement" and ref.solvation == "optimize" and ref.engine != "orbmol":
+    # Psi4 takes its frequencies as finite differences of analytical gradients, which
+    # MOIST has; PySCF's are analytical Hessians, which MOIST does not have.
+    if ref.rrho == "refinement" and ref.solvation == "optimize" and ref.engine == "pyscf":
         raise ValueError(
             f"[refinement] rrho = 'refinement' with solvation = 'optimize' needs a Hessian "
-            f"in solvent, and MOIST's PCM ({model!r}) has none. Use rrho = 'xtb'."
+            f"in solvent, and MOIST's PCM ({model!r}) has none on the pyscf driver. Use "
+            "rrho = 'xtb', or the psi4 driver (finite differences of gradients)."
         )
 
 
