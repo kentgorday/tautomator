@@ -33,7 +33,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pyscf import df, dft
+from pyscf import df, dft, lib
 
 from tautomator.dispersion_kernel import kernel_integral, kernel_surface_derivatives
 from tautomator.nonelectrostatic import (
@@ -67,6 +67,10 @@ from tautomator.surface_quadrature import (
 )
 
 Array = NDArray[np.float64]
+
+# The share of what mol.max_memory leaves that the normal-field map of a surface may take
+# (DropTerms._field_map); FastPCM's or MOIST's (k|mn) take another half.
+FIELD_STORE_FRACTION = 0.25
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,8 @@ class _Surface:
     rays: ExteriorRays
     kernel_volume: Array  # I at the all-space grid's points
     kernel_rays: Array  # I at the ray nodes
+    field_map: Array | None = None  # DropTerms._field_map
+    field_map_refused: bool = False
 
 
 @dataclass
@@ -245,6 +251,43 @@ class DropTerms:
         pos, d_pos = field_power(F, p.pos_exponent, 1)
         return p.neg_coeff * neg + p.pos_coeff * pos, p.neg_coeff * d_neg + p.pos_coeff * d_pos
 
+    def _field_map(self, surf: _Surface) -> Array | None:
+        """(npts, npair): row i takes the packed, weighted density matrix (`_packed`) to
+        n_i . E_el(s_i).  Kept with its surface while it fits in FIELD_STORE_FRACTION of what
+        mol.max_memory leaves, so that an SCF on a fixed surface (SvdW-DROP) computes the
+        integrals once; None where it does not fit."""
+        if surf.field_map is None and not surf.field_map_refused:
+            mol = self.mol
+            nao, npts = mol.nao, len(surf.areas)
+            npair = nao * (nao + 1) // 2
+            budget = FIELD_STORE_FRACTION * (mol.max_memory - lib.current_memory()[0]) * 1e6
+            if npts * npair * 8 > budget:
+                surf.field_map_refused = True
+                return None
+            P = np.empty((npts, npair))
+            for sl, ints in self._ip2_blocks(surf.xyz):
+                P[sl] = -sum(ints[x] * surf.normals[sl, x] for x in range(3)).T
+            surf.field_map = P
+        return surf.field_map
+
+    def _ip2_blocks(self, points: Array) -> Any:
+        """(slice, (3, npair, n) d/ds (mn|s)) over the points, packed in the AO pair.
+
+        E_el(s) = -sum_mn D_mn d/ds (mn|s): the derivative on the point, symmetric in m and n,
+        so half the integrals of the bra derivative.
+        """
+        mol = self.mol
+        npair = mol.nao * (mol.nao + 1) // 2
+        intor = mol._add_suffix("int3c2e_ip2")
+        for sl in _point_blocks(len(points), 3 * npair):
+            fakemol = _point_charges(mol, points[sl])
+            yield sl, df.incore.aux_e2(mol, fakemol, intor=intor, aosym="s2ij", comp=3)
+
+    def _packed(self, dm: Array) -> Array:
+        """D packed with weights, so that sum_mn D_mn X_mn = packed . X_packed for symmetric X."""
+        nao = self.mol.nao
+        return np.asarray(lib.pack_tril(dm + dm.T) * lib.pack_tril(1.0 - 0.5 * np.eye(nao)))
+
     def _field_term(
         self, dm: Array, surf: _Surface, potential: bool, adjoint: bool, gradient: bool
     ) -> tuple[float, Array, Array | None, Array | None, Array | None, Array | None, Array | None]:
@@ -253,56 +296,59 @@ class DropTerms:
         nao = mol.nao
         charges = mol.atom_charges()
         nuclear, tensor = _nuclear_field(surf.xyz, self.centres, charges)
-        ip1 = mol._add_suffix("int3c2e_ip1")
-        ip1ip2 = mol._add_suffix("int3c2e_ip1ip2")
         npts = len(surf.areas)
-        field = np.empty((npts, 3))
-        M = np.zeros((nao, nao)) if potential else None
         derivs = adjoint or gradient
-        w_xyz = np.zeros((npts, 3)) if derivs else None
+        d = self._packed(dm)
+        stored = None if derivs else self._field_map(surf)
+        field = None
+        if stored is not None:
+            F = np.einsum("px,px->p", nuclear, surf.normals) + stored @ d
+        else:
+            field = nuclear.copy()
+            for sl, ints in self._ip2_blocks(surf.xyz):
+                field[sl] -= np.tensordot(d, ints, ([0], [1])).T
+            F = np.einsum("px,px->p", field, surf.normals)
+        f, f_prime = self._surface_function(F)
+        energy = float(surf.areas @ f)
+        V = None
+        if potential:
+            c = surf.areas * f_prime
+            if stored is not None:
+                packed = c @ stored
+            else:
+                packed = np.zeros(nao * (nao + 1) // 2)
+                for sl, ints in self._ip2_blocks(surf.xyz):
+                    q = c[sl, None] * surf.normals[sl]
+                    packed -= sum(ints[x] @ q[:, x] for x in range(3))
+            V = lib.unpack_tril(packed)
+        if not derivs:
+            return energy, F, V, None, None, None, None
+
+        assert field is not None
+        q = (surf.areas * f_prime)[:, None] * surf.normals  # dG/dE at s_i
+        w_xyz = np.zeros((npts, 3))
         g = np.zeros((mol.natm, 3)) if gradient else None
-        blocks = _point_blocks(npts, (9 if derivs else 3) * nao * nao)
-        for sl in blocks:
+        ip1ip2 = mol._add_suffix("int3c2e_ip1ip2")
+        for sl in _point_blocks(npts, 9 * nao * nao):
             fakemol = _point_charges(mol, surf.xyz[sl])
-            ints = df.incore.aux_e2(mol, fakemol, intor=ip1, aosym="s1", comp=3)
-            nb = ints.shape[-1]
-            field[sl] = (
-                nuclear[sl] + 2.0 * np.tensordot(dm.ravel(), ints.reshape(3, -1, nb), ([0], [1])).T
-            )
-            if M is None and not derivs:
-                continue
-            F = np.einsum("px,px->p", field[sl], surf.normals[sl])
-            _f, f_prime = self._surface_function(F)
-            q = (surf.areas[sl] * f_prime)[:, None] * surf.normals[sl]  # dG/dE at s_i
-            if M is not None:
-                for x in range(3):
-                    M += ints[x] @ q[:, x]
-            del ints
-            if not derivs:
-                continue
             # W[a, b] = (d_a m n | d_b s): see NonelectrostaticTerms.gradient
             W = df.incore.aux_e2(mol, fakemol, intor=ip1ip2, aosym="s1", comp=9)
+            nb = W.shape[-1]
             W = W.reshape(3, 3, nao * nao, nb)
             field_grad = -2.0 * np.tensordot(dm.ravel(), W, ([0], [2])).transpose(2, 1, 0)
             field_grad += np.einsum("a,paxy->pxy", charges, tensor[sl])
-            assert w_xyz is not None
-            w_xyz[sl] = np.einsum("px,pxy->py", q, field_grad)
+            w_xyz[sl] = np.einsum("px,pxy->py", q[sl], field_grad)
             if g is not None:
                 Mx = np.zeros((3, nao * nao))
                 for y in range(3):
                     for x in range(3):
-                        Mx[y] += W[y, x] @ q[:, x]
+                        Mx[y] += W[y, x] @ q[sl, x]
                 T = (Mx.reshape(3, nao, nao) * dm[None]).sum(axis=2)
                 for y in range(3):
                     g[:, y] += 2.0 * np.bincount(self._ao_atom, T[y], minlength=mol.natm)
-                g -= np.einsum("a,px,paxy->ay", charges, q, tensor[sl])
-        F = np.einsum("px,px->p", field, surf.normals)
-        f, f_prime = self._surface_function(F)
-        energy = float(surf.areas @ f)
-        V = None if M is None else M + M.T
-        w_n = (surf.areas * f_prime)[:, None] * field if derivs else None
-        w_a = f if derivs else None
-        return energy, F, V, w_xyz, w_n, w_a, g
+                g -= np.einsum("a,px,paxy->ay", charges, q[sl], tensor[sl])
+        w_n = (surf.areas * f_prime)[:, None] * field
+        return energy, F, V, w_xyz, w_n, f, g
 
     # -- one evaluation ------------------------------------------------------------
 
@@ -316,7 +362,9 @@ class DropTerms:
         surf = self._surface(dm)
         rays, vol = surf.rays, self.volume
         derivs = adjoint or gradient
-        deriv = 2 if derivs else 1
+        if not derivs:
+            return self._evaluate_once(dm, surf, potential)
+        deriv = 2
 
         # densities on both point sets
         rho_v, grad_v, hess_v = _density(mol, dm, vol.coords, deriv)
@@ -397,6 +445,60 @@ class DropTerms:
         dG_v = A * (du_v * I_v[None] + u_v[None] * dI_v)
         g_vol = volume_grid_gradient(vol, self.centres, G_v, dG_v.T)
         out.explicit = g_vol + gb_v + r_R + gb_r + g_field
+        return out
+
+    def _evaluate_once(self, dm: Array, surf: _Surface, potential: bool) -> _Pass:
+        """Energy and V at a fixed surface, the densities and V from one pass over each grid."""
+        mol = self.mol
+        s = self.settings
+        A, B = s.params.dispersion, s.params.exchange
+        ni = dft.numint.NumInt()
+        nao = mol.nao
+        V = np.zeros((nao, nao)) if potential else None
+        sums = {"dispersion": 0.0, "exchange": 0.0, "electrons": 0.0}
+
+        def run(coords: Array, weights: Array, kernel: Array, outside: bool) -> None:
+            for sl in _point_blocks(len(coords), 4 * nao):
+                ao = ni.eval_ao(mol, coords[sl], deriv=1)
+                c0 = ao[0] @ dm
+                rho = (ao[0] * c0).sum(axis=1)
+                grad = 2.0 * (ao[1:4] * c0[None]).sum(axis=2)
+                sigma = np.sum(grad**2, axis=0)
+                u, u_r, u_s = dispersion_density(rho, sigma, s.solvent_rho, s.vv_c)
+                w, k = weights[sl], kernel[sl]
+                sign = -1.0 if outside else 1.0
+                sums["dispersion"] += sign * float(w @ (u * k))
+                c_rho = sign * A * w * k * u_r
+                c_sigma = sign * A * w * k * u_s
+                if outside:
+                    x, x_s = exchange_density(sigma)
+                    sums["exchange"] += float(w @ x)
+                    sums["electrons"] += float(w @ rho)
+                    c_sigma = c_sigma + B * w * x_s
+                if V is not None:
+                    wv = np.empty((4, len(w)))
+                    wv[0] = 0.5 * c_rho
+                    wv[1:] = 2.0 * c_sigma[None] * grad
+                    V[:] += ao[0].T @ (ao * wv[:, :, None]).sum(axis=0)
+
+        run(self.volume.coords, self.volume.weights, surf.kernel_volume, outside=False)
+        run(surf.rays.coords, surf.rays.weights, surf.kernel_rays, outside=True)
+        sr, F, V3, *_ = self._field_term(dm, surf, potential, False, False)
+        energies = Energies(
+            dispersion=A * sums["dispersion"], exchange=B * sums["exchange"], short_range=sr
+        )
+        integrals = DropIntegrals(
+            dispersion=sums["dispersion"],
+            exchange=sums["exchange"],
+            electrons_outside=sums["electrons"],
+            areas=surf.areas,
+            normal_field=F,
+            element_atoms=surf.owners,
+        )
+        out = _Pass(energies=energies, integrals=integrals)
+        if V is not None:
+            assert V3 is not None
+            out.V = V + V.T + V3
         return out
 
     # -- the public interface ---------------------------------------------------------
