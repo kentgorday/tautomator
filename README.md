@@ -177,8 +177,11 @@ score. All three drivers implement the same three operations (`single_point`,
   `[compute] memory_gb` leaves after the memory the process already holds.
   They grow with the cube of molecule size: at wB97X-3c/vDZP they take 0.37 GB
   for acetaminophen (11 heavy atoms), 2.0 GB for lidocaine (17) and 12 GB for
-  imatinib (37), so at the default `memory_gb = 4` lidocaine is about the
-  largest molecule that keeps them. Without them the SCF runs at PySCF's speed
+  imatinib (37), and at def2-QZVPPD 10 GB for acetaminophen already. At the
+  default `memory_gb = 12` every species of the pKa training set and the MNSol
+  subset keeps them at vDZP, all but one at def2-TZVPPD, and 66% and 81% at
+  def2-QZVPPD (16% and 41% at 4 GB); all of them at def2-QZVPPD would take
+  40 GB. Without them the SCF runs at PySCF's speed
   and only the gradient stays faster: acetaminophen took 44 s with the
   integrals left out, against 17 s with them kept and 48 s with PySCF's PCM. A
   larger `memory_gb` raises the limit, if the machine has the memory. On macOS
@@ -226,6 +229,16 @@ score. All three drivers implement the same three operations (`single_point`,
   ISWIG switching, radii and models) with analytical gradients, so Psi4
   minimizes in solvent too, and its solvation energies match PySCF's to
   <1e-5 kcal/mol at the same level.
+
+  A solvated job splits `[compute] memory_gb` as PySCF does: half may hold the
+  surface integrals between SCF iterations (psi4-swig-pcm's `incore_mb`, kept
+  only if they fit whole), and Psi4 gets the other half (`--memory`); a
+  gas-phase job gives Psi4 all of it. Kept, the PCM cost phenol at
+  wB97M-V/def2-QZVPPD 1.02x its gas-phase job, against 1.33x recomputed, and
+  lidocaine and acetaminophen at wB97X-3c/vDZP 1.0x against 2.3x and 2.2x
+  (8 threads). Psi4's own share is enough: phenol and lidocaine ran as fast at
+  2 GB as at 4, and the pKa set's largest species at def2-QZVPPD as fast at
+  6 GB as at 12 (that one measured on Accelerate's BLAS).
 
   The DROP solvent models (`"<model>/<cavity>"`, as for PySCF above) run
   through psi4-swig-pcm's MOIST host, with the same cavities and pruning as

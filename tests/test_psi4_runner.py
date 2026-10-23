@@ -15,6 +15,7 @@ from tautomator import psi4_runner, refinement, scoring
 from tautomator.config import (
     DEFAULT_MEMORY_GB,
     DROP_PRUNE_LEVEL,
+    PCM_STORE_FRACTION,
     PCM_SWITCHING,
     solvent_dielectric,
 )
@@ -49,28 +50,34 @@ class TestPCMBlock:
         ],
     )
     def test_names_the_model(self, model: str, method: str) -> None:
-        assert f"method={method!r}" in _pcm_block(model, "water")
+        assert f"method={method!r}" in _pcm_block(model, "water", incore_mb=1000)
 
     def test_dielectric_is_the_one_pyscf_gets(self) -> None:
-        assert f"eps={solvent_dielectric('methanol')!r}" in _pcm_block("IEFPCM", "Methanol")
+        assert f"eps={solvent_dielectric('methanol')!r}" in _pcm_block(
+            "IEFPCM", "Methanol", incore_mb=1000
+        )
 
     def test_switching_is_the_one_pyscf_gets(self) -> None:
-        assert f"switching={PCM_SWITCHING!r}" in _pcm_block("IEFPCM", "water")
+        assert f"switching={PCM_SWITCHING!r}" in _pcm_block("IEFPCM", "water", incore_mb=1000)
 
     def test_hydrogen_radius_is_a_free_parameter(self) -> None:
-        assert "modified_bondi_radii(hydrogen=1.1)" in _pcm_block("IEFPCM", "water")
-        assert "modified_bondi_radii(hydrogen=1.3)" in _pcm_block("IEFPCM", "water", 1.3)
+        assert "modified_bondi_radii(hydrogen=1.1)" in _pcm_block(
+            "IEFPCM", "water", incore_mb=1000
+        )
+        assert "modified_bondi_radii(hydrogen=1.3)" in _pcm_block(
+            "IEFPCM", "water", 1.3, incore_mb=1000
+        )
 
     def test_is_python(self) -> None:
-        block = _pcm_block("IEFPCM", "water")
+        block = _pcm_block("IEFPCM", "water", incore_mb=1000)
         compile(block, "<pcm block>", "exec")
         assert "psi4_swig_pcm.enable(psi4_swig_pcm.PCMSettings(" in block
 
     def test_unknown_model_or_solvent_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):
-            _pcm_block("SMD", "water")
+            _pcm_block("SMD", "water", incore_mb=1000)
         with pytest.raises(ValueError, match="Unknown solvent"):
-            _pcm_block("IEFPCM", "ammonia")
+            _pcm_block("IEFPCM", "ammonia", incore_mb=1000)
 
     def test_every_job_enables_it_before_computing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         inputs: list[str] = []
@@ -106,16 +113,16 @@ class TestMoistBlock:
         ],
     )
     def test_names_the_model_and_cavity(self, model: str, component: str, lsf: str) -> None:
-        block = _pcm_block(model, "water")
+        block = _pcm_block(model, "water", incore_mb=1000)
         assert f"components=(moist.{component}({solvent_dielectric('water')!r}),)" in block
         assert f"cavity=moist.DROP(lsf=moist.{lsf}()," in block
 
     def test_pruned_as_pyscf_runner_prunes(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water")
+        block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
         assert f"DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})" in block
 
     def test_is_python_on_moists_own_radii(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water")
+        block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
         compile(block, "<moist block>", "exec")
         assert "psi4_swig_pcm.enable(MoistSettings(" in block
         assert "modified_bondi_radii" not in block and "PCMSettings" not in block
@@ -123,11 +130,11 @@ class TestMoistBlock:
     def test_hydrogen_radius_raises(self) -> None:
         # as on pyscf_runner: MOIST's cavity has radii of its own
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3)
+            _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3, incore_mb=1000)
 
     def test_unknown_cavity_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):
-            _pcm_block("IEFPCM/sphere-DROP", "water")
+            _pcm_block("IEFPCM/sphere-DROP", "water", incore_mb=1000)
 
     def test_enabled_before_every_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
         inputs: list[str] = []
@@ -336,6 +343,41 @@ class TestMemoryFlag:
             assert f"-s {tmp}" in (tmp_path / "argv.txt").read_text()
 
 
+class TestMemorySplit:
+    """A solvated job gives PCM_STORE_FRACTION of memory_gb to the PCM's stored integrals."""
+
+    @staticmethod
+    def _jobs(monkeypatch: pytest.MonkeyPatch, model: str | None) -> list[tuple[str, float]]:
+        """(input, Psi4's --memory in GB) of an energy, an optimization and a Hessian job."""
+        runs: list[tuple[str, float]] = []
+
+        def fake_run(input_text: str, work_dir: Path, **kwargs: float) -> str:
+            runs.append((input_text, kwargs["memory_gb"]))
+            (work_dir / "optimized.xyz").write_text("3\n\nO 0 0 0\nH 0 0 1\nH 0 1 0\n")
+            (work_dir / "frequencies.dat").write_text("")
+            return "=== FINAL ENERGY: -1.000000000000 ===\n=== CONVERGED: 1 ===\n"
+
+        monkeypatch.setattr(psi4_runner, "_run_psi4", fake_run)
+        job = ("PBE0", "def2-SVP", model, None if model is None else "water")
+        psi4_runner.single_point(_water(), 0, *job, memory_gb=12.0)
+        psi4_runner.optimize(_water(), 0, *job, memory_gb=12.0)
+        psi4_runner.frequencies(_water(), 0, *job, memory_gb=12.0)
+        return runs
+
+    @pytest.mark.parametrize("model", ["IEFPCM", "CPCM/rho-DROP"])
+    def test_solvated_jobs_split_it(self, monkeypatch: pytest.MonkeyPatch, model: str) -> None:
+        store_gb = 12.0 * PCM_STORE_FRACTION
+        for text, psi4_gb in self._jobs(monkeypatch, model):
+            # in MiB, from Psi4's 1e9-byte GB
+            assert re.findall(r"incore_mb=(\d+)", text) == [str(int(store_gb * 1e9 / 2**20))]
+            assert psi4_gb == 12.0 - store_gb
+
+    def test_gas_phase_jobs_give_psi4_all_of_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for text, psi4_gb in self._jobs(monkeypatch, None):
+            assert "incore_mb" not in text
+            assert psi4_gb == 12.0
+
+
 # ---------------------------------------------------------------------------
 # Which psi4 gets launched
 # ---------------------------------------------------------------------------
@@ -405,7 +447,7 @@ class TestPsi4Executable:
         psi4_runner.check_installed(drop=True)
         checked = (tmp_path / "checked.dat").read_text()
         assert "import moist\n" in checked
-        assert checked in _pcm_block("IEFPCM/SvdW-DROP", "water")
+        assert checked in _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
 
     def test_stages_on_a_drop_model_check_for_moist(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tautomator.config import RefinementConfig, Solvation

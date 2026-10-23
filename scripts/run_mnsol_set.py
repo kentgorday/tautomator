@@ -35,14 +35,14 @@ PySCF is the default driver here.  At high_quality on an M-series Mac (8
 threads, sampling reused) the two drivers refined in the same time, but Psi4
 scored at def2-QZVPPD 1.2-1.4x slower: toluene in water 215 s against PySCF's
 199 s at memory_gb 4 (Psi4 at 12 GB; at 4 GB, 242 s), toluene in the gas phase
-100 s against 82 s, acetate in water 46 s against 37 s.  A larger --memory
-helps PySCF more: FastPCM keeps its surface integrals in core only when they fit
-in half of it, which at 12 GB holds for about 87% of the set (toluene's PCM
-single point: 107 s at 4 GB, 61 s at 8).  And the nonelectrostatic descriptors
-can only be read off a PySCF mean field (pyscf_nonelectrostatic), so a Psi4 run
-needs --no-descriptors.  Run one job
-at a time on a 24 GB machine: toluene's scoring job peaked at 10.5 GB, and at
---memory 12 the largest solutes add up to 6 GB of surface integrals to that
+100 s against 82 s, acetate in water 46 s against 37 s.  Those Psi4 runs kept
+no PCM surface integrals; both drivers now keep them in core when they fit in
+half of --memory, which at the default 12 GB holds at def2-QZVPPD for 81% of the
+set (toluene's PySCF PCM single point: 107 s at 4 GB, 61 s at 8).  And the
+nonelectrostatic descriptors can only be read off a PySCF mean field
+(pyscf_nonelectrostatic), so a Psi4 run needs --no-descriptors.  Run one job at
+a time on a 24 GB machine: toluene's scoring job peaked at 10.5 GB, and at 12 GB
+the largest solutes that keep their surface integrals add up to 6 GB to that
 (an estimate, not measured).
 
 Usage:
@@ -148,8 +148,8 @@ def main() -> None:
         default=DEFAULT_MEMORY_GB,
         metavar="GB",
         help=(
-            f"per-QM-job memory in GB (default: {DEFAULT_MEMORY_GB}).  On PySCF, FastPCM "
-            "keeps its surface integrals in core only when they fit in half of it."
+            f"per-QM-job memory in GB (default: {DEFAULT_MEMORY_GB}).  Either driver "
+            "keeps the PCM's surface integrals in core only when they fit in half of it."
         ),
     )
     parser.add_argument(

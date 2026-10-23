@@ -32,6 +32,7 @@ from tautomator.config import (
     DROP_LSF,
     DROP_PRUNE_LEVEL,
     PCM_METHODS,
+    PCM_STORE_FRACTION,
     PCM_SWITCHING,
     drop_solvent_model,
     solvent_dielectric,
@@ -151,7 +152,27 @@ def _df_basis_block(basis: str, geom: Geometry) -> str:
 _MOIST_IMPORTS = "import moist\nfrom psi4_swig_pcm.moist_host import MoistSettings\n"
 
 
-def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.1) -> str:
+def _solvation(
+    solvent_model: str | None, solvent: str | None, pcm_hydrogen_radius: float, memory_gb: float
+) -> tuple[str, float]:
+    """A job's solvent-model input lines, and the memory (GB) left for Psi4 itself.
+
+    A solvated job splits memory_gb as pyscf_runner's PCMs do: the stored surface
+    integrals may take PCM_STORE_FRACTION of it (incore_mb), and Psi4 gets the rest
+    (--memory).  Without a solvent model there are no lines and Psi4 gets all of it.
+    """
+    if solvent_model is None or solvent is None:
+        return "", memory_gb
+    store_gb = memory_gb * PCM_STORE_FRACTION
+    # Psi4 counts a GB as 1e9 bytes; psi4-swig-pcm's incore_mb is in MiB.
+    incore_mb = int(store_gb * 1e9 / 2**20)
+    lines = _pcm_block(solvent_model, solvent, pcm_hydrogen_radius, incore_mb=incore_mb)
+    return lines, memory_gb - store_gb
+
+
+def _pcm_block(
+    solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.1, *, incore_mb: int
+) -> str:
     """Psi4 input lines that put psi4-swig-pcm's PCM into every SCF of the job.
 
     psi4_swig_pcm.enable() makes Psi4's own energy(), gradient(), optimize() and
@@ -159,7 +180,9 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
     pyscf_runner's: switching/Gaussian surface (PCM_SWITCHING) on Lebedev order 29,
     modified-Bondi radii x 1.2 with hydrogen at pcm_hydrogen_radius (Angstrom), and
     the same dielectric constant, so both drivers build the same cavity.  Its warnings go
-    to stderr, where _run_psi4 looks for them.
+    to stderr, where _run_psi4 looks for them.  incore_mb (MiB, outside Psi4's own
+    memory) is the most the surface integrals of a cavity may take to be kept between
+    SCF iterations; _solvation sizes it.
 
     A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
     with the cavity and pruning pyscf_runner gives MOIST.  pcm_hydrogen_radius is refused
@@ -185,6 +208,7 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
             f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
             f"parameters=moist.DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
             f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
+            f"    incore_mb={incore_mb},\n"
             "))\n"
         )
         return preamble + _MOIST_IMPORTS + moist_settings
@@ -197,7 +221,8 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
     settings = (
         f"method={PCM_METHODS[key]!r}, eps={eps!r}, "
         f"switching={PCM_SWITCHING!r}, "
-        f"radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r})"
+        f"radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r}), "
+        f"incore_mb={incore_mb}"
     )
     return preamble + (
         "from psi4_swig_pcm.cavity import modified_bondi_radii\n"
@@ -234,8 +259,10 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    if solvent_model is not None and solvent is not None:
-        input_text += _pcm_block(solvent_model, solvent, pcm_hydrogen_radius)
+    solvent_lines, psi4_memory_gb = _solvation(
+        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
+    )
+    input_text += solvent_lines
 
     input_text += f"""
 E = energy('{method}')
@@ -243,7 +270,7 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 """
 
     with _scratch_dir() as tmp:
-        output = _run_psi4(input_text, Path(tmp), threads=threads, memory_gb=memory_gb)
+        output = _run_psi4(input_text, Path(tmp), threads=threads, memory_gb=psi4_memory_gb)
         return _parse_final_energy(output)
 
 
@@ -300,8 +327,10 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    if solvent_model is not None and solvent is not None:
-        input_text += _pcm_block(solvent_model, solvent, pcm_hydrogen_radius)
+    solvent_lines, psi4_memory_gb = _solvation(
+        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
+    )
+    input_text += solvent_lines
 
     # Wrap optimize() so that a non-convergence exception still yields a
     # geometry and energy on disk (from the last optimizer step).  Two failure
@@ -334,7 +363,7 @@ wfn.molecule().save_xyz_file('optimized.xyz', True)
 
     with _scratch_dir() as tmp:
         work_dir = Path(tmp)
-        output = _run_psi4(input_text, work_dir, threads=threads, memory_gb=memory_gb)
+        output = _run_psi4(input_text, work_dir, threads=threads, memory_gb=psi4_memory_gb)
         energy = _parse_final_energy(output)
         converged = _parse_converged_flag(output)
         opt_geom = read_xyz(work_dir / "optimized.xyz")
@@ -377,8 +406,10 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    if solvent_model is not None and solvent is not None:
-        input_text += _pcm_block(solvent_model, solvent, pcm_hydrogen_radius)
+    solvent_lines, psi4_memory_gb = _solvation(
+        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
+    )
+    input_text += solvent_lines
 
     input_text += f"""
 E, wfn = frequency('{method}', return_wfn=True)
@@ -391,7 +422,7 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 
     with _scratch_dir() as tmp:
         work_dir = Path(tmp)
-        _run_psi4(input_text, work_dir, threads=threads, memory_gb=memory_gb)
+        _run_psi4(input_text, work_dir, threads=threads, memory_gb=psi4_memory_gb)
         freq_text = (work_dir / "frequencies.dat").read_text()
 
     freq_list: list[float] = []
@@ -500,7 +531,8 @@ def _run_psi4(
 
     memory_gb becomes ``--memory``, always passed so that Psi4 never silently
     falls back to its 500 MiB default (which starves the DFT collocation
-    cache) and so a config means the same thing on both backends.
+    cache) and so a config means the same thing on both backends.  It is Psi4's
+    own share: a solvated job passes what _solvation leaves after the PCM's.
     """
     input_path = work_dir / "input.dat"
     output_path = work_dir / "output.dat"

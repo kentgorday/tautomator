@@ -9,10 +9,11 @@
 
 Stock PCM recomputes the surface integrals (k|mn) every SCF iteration, contracts them with
 numpy.einsum and does two dense solves with K.  FastPCM takes the cavity, K and R from
-PCM.build unchanged, then, once per geometry, LU-factors K and (when they fit in half of the
-memory left) stores the integrals packed, so an iteration is two BLAS products and two LU
-solves.  When they don't fit, _get_v and _get_vmat are PySCF's, which recompute them every
-iteration, so the SCF runs at stock speed (the README has sizes by molecule).
+PCM.build unchanged, then, once per geometry, LU-factors K and (when they fit in
+config.PCM_STORE_FRACTION, half, of the memory left) stores the integrals packed, so an
+iteration is two BLAS products and two LU solves.  When they don't fit, _get_v and
+_get_vmat are PySCF's, which recompute them every iteration, so the SCF runs at stock
+speed (the README has sizes by molecule).
 
 Its gradient computes PySCF's grad_qv term from one pass of libcint's int1e_grids_ip: a
 Gaussian charge of exponent xi^2 is a point charge under rinv_zeta = xi^2, so the points
@@ -46,6 +47,8 @@ from pyscf import df, gto, lib
 from pyscf.lib import logger
 from pyscf.solvent import pcm
 from scipy.linalg import lu_factor, lu_solve
+
+from tautomator.config import PCM_STORE_FRACTION
 
 Array = NDArray[np.float64]
 
@@ -157,7 +160,7 @@ class FastPCM(pcm.PCM):  # type: ignore[misc]
         nao = mol.nao
         coords, exponents = self.surface["grid_coords"], self.surface["charge_exp"]
         npair = nao * (nao + 1) // 2
-        budget_mb = 0.5 * (self.max_memory - lib.current_memory()[0])
+        budget_mb = PCM_STORE_FRACTION * (self.max_memory - lib.current_memory()[0])
         if coords.shape[0] * npair * 8 / 1e6 <= budget_mb:
             fakemol = gto.fakemol_for_charges(coords, expnt=exponents**2)
             fakemol.cart = mol.cart

@@ -78,7 +78,7 @@ from pyscf import df, gto, lib
 from pyscf.lib import logger
 from scipy.special import erf
 
-from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL
+from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL, PCM_STORE_FRACTION
 from tautomator.pyscf_fast_pcm import fingerprint
 
 Array = NDArray[np.float64]
@@ -233,8 +233,8 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
 
     # ------------------------------------------------------------------ memory
     def _budget_bytes(self) -> float:
-        """Half the memory mol.max_memory leaves after what the process holds, in bytes."""
-        return 0.5 * float(self.mol.max_memory - lib.current_memory()[0]) * 1e6
+        """PCM_STORE_FRACTION (half) of what mol.max_memory leaves after the process, in bytes."""
+        return PCM_STORE_FRACTION * float(self.mol.max_memory - lib.current_memory()[0]) * 1e6
 
     def _blocksize(self, per_point: float) -> int:
         """Points per block of integrals that are not kept: BLOCK_BYTES, or the budget if less."""

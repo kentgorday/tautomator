@@ -35,12 +35,31 @@ from pathlib import Path
 from typing import Any, Literal
 
 # Per-QM-job memory ceiling, shared by both backends so a given config means
-# the same thing on either one.  Their native defaults disagree by 8x (Psi4
-# 500 MiB, PySCF 4 GB), which is an invisible backend difference in a project
-# that cross-checks the two.  4 GB matches PySCF's own default, so only Psi4
-# moves; measured wall time on def2-QZVPPD/wB97M-V is flat from 4 GB up, so
-# there is nothing to buy by going higher.
-DEFAULT_MEMORY_GB = 4.0
+# the same thing on either one (their native defaults are Psi4's 500 MiB and
+# PySCF's 4 GB).  A solvated job gives PCM_STORE_FRACTION of it to the PCM's
+# stored surface integrals (k|mn), npts * nbf(nbf+1)/2 doubles, kept only if
+# they fit whole; otherwise every SCF iteration recomputes them, which made a
+# whole Psi4 job 1.3-2.4x slower (phenol at wB97M-V/def2-QZVPPD, lidocaine and
+# acetaminophen at wB97X-3c/vDZP; FastPCM on PySCF: README).  Without a solvent
+# model a job gets all of it.  Psi4's own half was enough: the largest species
+# below ran its wB97M-V/def2-QZVPPD gas-phase job in 332 s at 6 GB and 340 s at
+# 12 (on Accelerate's BLAS), and phenol and lidocaine as fast at 2 GB as at 4.
+#
+# 12 GB keeps the integrals over the pKa training set (all 192 species, every
+# charge state) and the MNSol subset (417): at refinement's vDZP for every one
+# (largest 0.6 GB), at def2-TZVPPD for all but one (6.1 GB), and at def2-QZVPPD
+# for 66% and 81% of them (16% and 41% at 4 GB).  Keeping all of them at
+# def2-QZVPPD would take 40 GB, more than a 24 GB machine has for one job, and
+# more is not free there: PySCF sizes its own buffers to memory_gb (and on macOS
+# cannot see what it already holds), so a def2-QZVPPD PCM job on an 18-atom
+# molecule swapped at 16 and 18 GB and took 1.5x as long as at 8 or 12.
+DEFAULT_MEMORY_GB = 12.0
+
+# The share of memory_gb a solvated job's stored PCM surface integrals may take, on
+# either driver: FastPCM and the MOIST host keep them while they fit in this share of
+# what the process has left (on macOS PySCF cannot see what it holds, so the whole
+# share), and a Psi4 job gives this share to psi4-swig-pcm and the rest to Psi4.
+PCM_STORE_FRACTION = 0.5
 
 # Coulomb/exchange fitting basis for density-fitted SCF.  Weigend's universal JK
 # set is what Psi4 blends by default for the def2 family and for vDZP -- its

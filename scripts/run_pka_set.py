@@ -115,9 +115,9 @@ def main() -> None:
         metavar="GB",
         help=(
             f"Per-QM-job memory ceiling in GB (default: {DEFAULT_MEMORY_GB}). "
-            "Applies to both backends. Raising it past a few GB buys nothing on "
-            "def2-QZVPPD/wB97M-V; PySCF will try to allocate up to this, so keep "
-            "it under real free memory."
+            "Applies to both backends; a solvated job gives half of it to the PCM's "
+            "surface integrals, kept between SCF iterations only if they fit. PySCF "
+            "will try to allocate up to this, so keep it under real free memory."
         ),
     )
     parser.add_argument(
