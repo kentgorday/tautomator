@@ -26,6 +26,10 @@ The code:
 - `tautomator/pyscf_nonelectrostatic_scf.py`: the correction inside the SCF.
 - psi4-swig-pcm's `nonelectrostatic.py` and `csrc/nonelectrostatic.cpp`: the
   same for Psi4, both modes (see Gradients below).
+- On MOIST's DROP cavities (see "On MOIST's DROP cavities" below):
+  `tautomator/surface_quadrature.py` (the volume integrals written on the
+  surface), `tautomator/pyscf_nonelectrostatic_drop.py` (the terms, both
+  models, descriptors), and psi4-swig-pcm's `nonelectrostatic_drop.py`.
 
 ---
 
@@ -351,6 +355,123 @@ self-consistent model would have to be fitted self-consistently.
 
 ---
 
+## On MOIST's DROP cavities
+
+The same three terms on the surface MOIST builds for its PCM
+(`solvent_model = "<model>/SvdW-DROP"` or `"<model>/rho-DROP"`; the README has
+the cavities), both models, with analytical gradients, on PySCF and Psi4. A
+DROP surface is a set of points s_i with outward normals n_i and areas a_i,
+smooth in the geometry and, for rho-DROP, in the density. Everything is
+written on those, and MOIST takes the derivatives with respect to them back to
+the nuclei and the density.
+
+**The volume integrals, by the divergence theorem** (`surface_quadrature`).
+For a nucleus at c inside the cavity and any integrand q, the radial field
+F(x) = e/r^2 int_r^inf q(c + t e) t^2 dt has div F = -q, so the outside
+integral is sum_i a_i n_i . F(s_i): a ray from the nucleus through every
+surface point, integrated from the surface outwards (Gauss-Legendre after
+t = r + L (1 + x)/(1 - x)). Each atom takes its share of the integrand through
+the Stratmann-Scuseria-Frisch partition, so no ray meets another nucleus's
+cusp; the partition is exactly zero outside an atom's cell, and an atom's cell
+factor never grows along a ray leaving its nucleus, so a surface point outside
+the cell drops the pair exactly. The outside integrals (exchange, electrons
+outside) are then a weighted point set; the inside one (dispersion) is an
+all-space atom grid with the same partition less the outside. Checked on
+acetate's rho-DROP surface against a brute-force integral over rho < 1e-3 on
+a fine atom grid (the region rho-DROP bounds): 1e-5 relative at MOIST's nleb
+1202, 1.3e-3 at its default 194. Two quite different partitions (SSF and
+Becke) give the same integrals to 2e-5.
+
+**Gradients through MOIST's reverse pass.** G depends on the cavity only
+through (s_i, n_i, a_i), so dG/d(s, n, a) is the surface adjoint MOIST's own
+models hand their cavity: its reverse pass contracts it into the nuclear
+gradient (the anchor, switching and level-set field routes), and on rho-DROP
+into density weights, conjugate to rho and its first two derivatives on the
+grid, which give the Fock term (against d rho/dD) and the density's route in
+the gradient (against d rho/dR at fixed D). MOIST 1.1.0a1 does not export the
+two contractions; psi4-swig-pcm's `packages/moist` recipe adds them
+(`patches/0002`, `moist_contract_cavity_surface_gradient` and `_density`,
+validated against the cavity rebuilt at displaced nuclei). Energies and
+descriptors work without them; gradients and the self-consistent Fock matrix
+on rho-DROP refuse to run without them. Against finite differences (formate,
+HF/def2-SVP): fixed-density gradients 3e-8, the potential 1e-8 relative, the
+self-consistent and post-SCF total gradients 1e-8 to 9e-8 Eh/bohr, on both
+cavities and both programs; Psi4 and PySCF agree to 1e-10 Eh.
+
+**The models.** Self-consistent (`pyscf_nonelectrostatic_drop.
+enable_self_consistent`; psi4-swig-pcm's `MoistSettings(nonelectrostatic=...)`
+with `self_consistent=True`): G and V every iteration. On rho-DROP V includes
+the surface's own response to the density. Post-SCF
+(`pyscf_nonelectrostatic_drop.post_scf_gradient`): the Z-vector of the PCM
+version, with MOIST's response in place of PySCF's PCM. On SvdW-DROP that is
+exact, because the PCM's Fock matrix is affine in the density on a fixed
+surface. On rho-DROP the surface follows the density and MOIST has no second
+derivatives, so the PCM's response is differentiated numerically (central
+differences at two steps, Richardson). On Psi4, the post-SCF response is the
+finite field, as for psi4-swig-pcm's own PCM.
+
+**MOIST's PCM solves its charges iteratively, to 1e-8 by default.** The SCF
+density carries that noise. A variational energy does not see it; the
+post-SCF G does, and its finite differences divide it by the step. The
+finite-difference tests use MOIST's dense solver.
+
+**Descriptors.** `drop_descriptors` (and scoring with
+`nonelectrostatic_descriptors` on a DROP model) gives the same `Descriptors`:
+per surface point the area, the solute's normal field, the PCM's charge recast
+as a field (its correlation with the normal field is 0.97 on formate) and the
+atom whose sphere the point was projected from. The file's settings record the
+cavity, MOIST's pruning level and the quadrature (`volume_rule`, `ray_rule`,
+`partition_a`).
+
+**How fine the grids need to be, in kcal/mol.** The same 42 solutes as on
+PySCF's cavity (25 neutrals, 17 ions; wB97X-3c/vDZP, density fixed), rough
+parameters A = -0.0036 and B = 0.0105, and field coefficients giving acetate's
+negative-field term -15 and methylammonium's positive-field term -5 kcal/mol
+at n = 3 (G spans -41 to 0 kcal/mol on SvdW-DROP, -36 to 0 on rho-DROP). Each
+grid varied alone against references (all-space (59, 40, 1.5), rays (40, 1.0),
+MOIST's nleb 1202), max error / RMS:
+
+| grid | SvdW-DROP | rho-DROP |
+|---|---|---|
+| all-space (17, 12, 1.5) | 0.093 / 0.040 | 0.093 / 0.040 |
+| all-space (23, 12, 1.5) | 0.077 / 0.038 | 0.077 / 0.038 |
+| **all-space (23, 16, 1.5) (default)** | 0.014 / 0.005 | 0.014 / 0.005 |
+| all-space (35, 24, 1.5) | 0.013 / 0.003 | 0.013 / 0.003 |
+| rays (8, 1.0) | 0.005 / 0.003 | 0.004 / 0.003 |
+| **rays (12, 1.0) (default)** | 0.001 / 0.000 | 0.001 / 0.000 |
+| MOIST's surface, nleb 194 (its default) | 0.072 / 0.023 | 0.062 / 0.022 |
+| MOIST's surface, nleb 302 | 0.041 / 0.013 | 0.037 / 0.013 |
+| MOIST's surface, nleb 590 | 0.021 / 0.006 | 0.020 / 0.006 |
+
+(kcal/mol.  At n = 4 the same, but for MOIST's surface at nleb 194 on rho-DROP:
+0.080 for methoxide.  The all-space grid's error is the dispersion integrand's
+over all space, which hardly depends on the cavity.) The all-space grid needs its 16 radial nodes;
+with them, MOIST's own surface is the largest error, as on PySCF's cavity, and
+it falls with nleb, which also refines the PCM.
+
+**What the relaxation is worth** on DROP, as on PySCF's cavity (rough
+parameters, exponent 2.5, c- and c+ set on each cavity to give acetate -15 and
+methylammonium -5 kcal/mol; wB97X-3c/vDZP), self-consistent minus post-SCF:
+
+| solute | G (SvdW / rho) | SvdW-DROP | rho-DROP |
+|---|---|---|---|
+| ethanol | -0.95 / -1.29 | -0.055 | -0.049 |
+| acetic acid | -1.54 / -1.86 | -0.091 | -0.098 |
+| acetate | -14.2 / -15.3 | **-1.06** | **-0.80** |
+| methylammonium | -5.3 / -5.0 | -0.016 | -0.074 |
+
+(kcal/mol.) On rho-DROP the self-consistent density also moves the surface.
+
+**Cost.** Toluene at wB97X-3c/vDZP (8 threads): on SvdW-DROP an SCF iteration
+of the self-consistent correction adds 0.2 s (the normal field's map onto the
+density matrix is kept with the surface), and its gradient 2.3 s. On rho-DROP
+the surface moves every iteration, so every iteration also needs dG/d(s, n, a)
+(the field's gradient at the points and the density's Hessian on the rays):
+about 3 s, beside MOIST's own ~1.5 s. The post-SCF gradient took 15 s on
+SvdW-DROP and 39 s on rho-DROP (the numerical response).
+
+---
+
 ## Not done yet
 
 - **Conformers outside the refinement window** have no scoring-level energy, so
@@ -359,6 +480,9 @@ self-consistent model would have to be fitted self-consistently.
 - **The pipeline does not use the correction yet**: no config switch puts it
   in refinement or scoring (there are no fitted parameters), and Psi4 scoring
   runs do not save descriptors.
+- **On DROP cavities:** the rho-DROP post-SCF gradient's PCM response is
+  numerical (MOIST has no second derivatives); the closed-shell restriction of
+  the PySCF Z-vector applies as on PySCF's cavity.
 - **Open-shell post-SCF gradient (PySCF).** The Z-vector is closed shell only;
   no MNSol solute is open shell. The self-consistent mode and psi4-swig-pcm
   take UHF/UKS but have no test for it.

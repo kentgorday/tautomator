@@ -199,10 +199,12 @@ score. All three drivers implement the same three operations (`single_point`,
   kcal/mol, against −6.5 on PySCF's cavity. Both have analytical gradients, so
   refinement minimizes in them, and both take vDZP's ECPs, which MOIST's own
   PySCF code refuses. On PySCF they have no Hessian (`rrho = "refinement"` with
-  `solvation = "optimize"` is refused; the psi4 driver has one). On either
-  driver they have no nonelectrostatic descriptors yet, and ignore
-  `pcm_hydrogen_radius`, a setting of the switching/Gaussian cavity (so a value
-  other than 1.1 is refused). On PySCF, MOIST solves the PCM and tautomator's
+  `solvation = "optimize"` is refused; the psi4 driver has one). The
+  nonelectrostatic correction runs on them too, with its gradients, on both
+  drivers (docs/nonelectrostatic.md, "On MOIST's DROP cavities"), and PySCF
+  scoring saves its descriptors there. They ignore `pcm_hydrogen_radius`, a
+  setting of the switching/Gaussian cavity (so a value other than 1.1 is
+  refused). On PySCF, MOIST solves the PCM and tautomator's
   own code supplies its integrals, as FastPCM keeps them, and in bounded
   memory. An IEF-PCM energy and gradient on acetaminophen (wB97X/def2-SVP, 4
   threads), against the gas-phase job:

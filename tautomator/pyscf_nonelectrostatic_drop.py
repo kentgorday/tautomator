@@ -509,8 +509,23 @@ class DropTerms:
     def integrals(self, dm: Array) -> DropIntegrals:
         return self._evaluate(dm).integrals
 
+    def _require_contractions(self) -> None:
+        """The surface derivatives need MOIST's reverse contractions, which psi4-swig-pcm's
+        packages/moist patch 0002 exports; energies and descriptors do not."""
+        if not hasattr(self.cavity, "contract_surface_gradient"):
+            import moist
+
+            raise RuntimeError(
+                f"MOIST {moist.__version__} does not export the surface contractions the "
+                "nonelectrostatic correction's gradient and self-consistent Fock matrix need "
+                "(moist_contract_cavity_surface_gradient and _density): they come from "
+                "psi4-swig-pcm's packages/moist recipe (patches/0002).  Energies and "
+                "descriptors work without them.  Update the moist package (pixi update moist)."
+            )
+
     def _density_weights(self, out: _Pass) -> Any:
         """MOIST's density weights for dG/d(s, n, a), or None on a fixed surface."""
+        self._require_contractions()
         return self.cavity.contract_surface_density(w_xyz=out.w_xyz, w_n=out.w_n, w_a=out.w_a)
 
     def energy_and_potential(self, dm: Array) -> tuple[Energies, Array]:
@@ -529,6 +544,7 @@ class DropTerms:
 
     def gradient(self, dm: Array) -> Array:
         """dG/dR (natm, 3) at fixed density matrix, the cavity's motion included."""
+        self._require_contractions()
         out = self._evaluate(dm, gradient=True)
         assert out.explicit is not None
         g = out.explicit + self.cavity.contract_surface_gradient(
