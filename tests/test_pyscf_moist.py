@@ -40,6 +40,7 @@ from pyscf import dft, gto, scf
 from pyscf.solvent import pcm
 
 from tautomator import pyscf_moist, pyscf_runner
+from tautomator.config import pcm_radii
 from tautomator.pyscf_moist import (
     CHECKED,
     REPLACED,
@@ -501,6 +502,26 @@ class TestRunner:
         with pytest.raises(NotImplementedError, match="no Hessian"):
             pyscf_runner.frequencies(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
 
-    def test_hydrogen_radius_is_refused(self) -> None:
+    @pytest.mark.parametrize("hydrogen", [1.1, 1.25])
+    def test_cavity_is_on_pyscf_cavitys_spheres(self, hydrogen: float) -> None:
+        """Never MOIST's own radii: the spheres of PySCF's cavity, whose hydrogen
+        pcm_hydrogen_radius sizes, on every element MOIST could be asked for."""
+        _, mf = pyscf_runner._build_mf(
+            WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water", hydrogen
+        )
+        radii = mf.with_moist.cavity.radii
+        assert type(radii) is moist.CustomRadii
+        table = pcm_radii(hydrogen)
+        assert radii.numbers == tuple(range(1, len(table)))
+        np.testing.assert_array_equal(radii.values, table[1:])
+        # and the cavity MOIST builds from them
+        driver = mf.with_moist._driver()
+        driver.evaluate(np.zeros((driver.mol.nao, driver.mol.nao)))
+        np.testing.assert_allclose(
+            np.asarray(driver.model.cavity.snapshot().radii), table[[8, 1, 1]], rtol=1e-12
+        )
+
+    def test_hydrogen_radius_is_refused_on_rho_drop(self) -> None:
+        # the isodensity surface does not depend on the radii, which only place its points
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water", 1.2)
+            pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/rho-DROP", "water", 1.2)

@@ -68,7 +68,7 @@ from typing import Any
 
 import moist.pyscf as mp
 import numpy as np
-from moist import DROPParameters, Structure
+from moist import CustomRadii, DROPParameters, Structure
 from moist.configuration import CavityConfiguration
 from moist.context import _resolve_context
 from moist.interface import PotentialAdjointResponse, SolvationModel, SolvationModelComponent
@@ -78,7 +78,7 @@ from pyscf import df, gto, lib
 from pyscf.lib import logger
 from scipy.special import erf
 
-from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL, PCM_STORE_FRACTION
+from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL, PCM_STORE_FRACTION, pcm_radii
 from tautomator.pyscf_fast_pcm import fingerprint
 
 Array = NDArray[np.float64]
@@ -95,16 +95,28 @@ PRUNE_LEVEL = DROP_PRUNE_LEVEL
 BLOCK_BYTES = 16e6
 
 
-def drop_cavity(name: str, **parameters: Any) -> Any:
-    """A DROP cavity by name (config.DROP_LSF), with PRUNE_LEVEL pruning; ``parameters`` go
-    to DROPParameters."""
+def drop_radii(hydrogen_radius: float = 1.1) -> CustomRadii:
+    """PySCF's cavity's spheres (config.pcm_radii) as MOIST radii, by element: every DROP
+    cavity is built on them, never on MOIST's own radius sets."""
+    radii = pcm_radii(hydrogen_radius)
+    return CustomRadii(radii[1:], numbers=np.arange(1, len(radii)))
+
+
+def drop_cavity(name: str, *, hydrogen_radius: float = 1.1, **parameters: Any) -> Any:
+    """A DROP cavity by name (config.DROP_LSF), on drop_radii(hydrogen_radius) with
+    PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
     parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
-    return DROP(lsf=getattr(mp, DROP_LSF[name])(), parameters=DROPParameters(**parameters))
+    return DROP(
+        lsf=getattr(mp, DROP_LSF[name])(),
+        parameters=DROPParameters(**parameters),
+        radii=drop_radii(hydrogen_radius),
+    )
 
 
-def svdw_drop(**parameters: Any) -> Any:
-    """The SvdW-DROP cavity with PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
-    return drop_cavity("SvdW-DROP", **parameters)
+def svdw_drop(*, hydrogen_radius: float = 1.1, **parameters: Any) -> Any:
+    """The SvdW-DROP cavity on drop_radii(hydrogen_radius) with PRUNE_LEVEL pruning;
+    ``parameters`` go to DROPParameters."""
+    return drop_cavity("SvdW-DROP", hydrogen_radius=hydrogen_radius, **parameters)
 
 
 def rho_drop(**parameters: Any) -> Any:

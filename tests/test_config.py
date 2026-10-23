@@ -13,6 +13,7 @@ from tautomator.config import (
     _has_diffuse,
     alpb_name,
     load_config,
+    pcm_radii,
     solvent_electron_density,
 )
 from tautomator.types import Geometry
@@ -1230,15 +1231,27 @@ class TestDropSolventModels:
             self._load(tmp_toml, "IEFPCM/SvdW-DROP")
 
     @pytest.mark.parametrize("section", ["scoring", "refinement"])
-    def test_hydrogen_radius_is_pyscf_cavitys(
+    def test_hydrogen_radius_sizes_svdw_drops_spheres(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        section: str,
+    ) -> None:
+        # SvdW-DROP is built on PySCF's cavity's spheres (config.pcm_radii)
+        moist_installed(True)
+        config = self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+        assert getattr(config, section).pcm_hydrogen_radius == 1.2
+
+    @pytest.mark.parametrize("section", ["scoring", "refinement"])
+    def test_hydrogen_radius_refused_on_rho_drop(
         self,
         tmp_toml: Callable[[str], Path],
         moist_installed: Callable[[bool], None],
         section: str,
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+        with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius .* nothing"):
+            self._load(tmp_toml, "IEFPCM/rho-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
 
     def test_no_hessian_in_solvent(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
@@ -1260,3 +1273,19 @@ class TestDropSolventModels:
         moist_installed(True)
         with pytest.raises(ValueError, match="not yet on MOIST's DROP cavities"):
             self._load(tmp_toml, "IEFPCM/SvdW-DROP", scoring="nonelectrostatic_descriptors = true")
+
+
+class TestPcmRadii:
+    """The one table of sphere radii every cavity is built on (both drivers, all cavities)."""
+
+    def test_is_pyscfs_own_default(self) -> None:
+        import pyscf.solvent.pcm as pcm
+
+        np.testing.assert_array_equal(pcm_radii(), 1.2 * pcm.modified_Bondi)
+
+    def test_hydrogen_radius_moves_hydrogen_alone(self) -> None:
+        from pyscf.data.radii import BOHR
+
+        default, wider = pcm_radii(1.1), pcm_radii(1.3)
+        assert wider[1] == pytest.approx(1.2 * 1.3 / BOHR)
+        np.testing.assert_array_equal(np.delete(default, 1), np.delete(wider, 1))

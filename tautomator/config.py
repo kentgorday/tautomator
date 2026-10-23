@@ -34,6 +34,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
+from numpy.typing import NDArray
+
 # Per-QM-job memory ceiling, shared by both backends so a given config means
 # the same thing on either one (their native defaults are Psi4's 500 MiB and
 # PySCF's 4 GB).  A solvated job gives PCM_STORE_FRACTION of it to the PCM's
@@ -163,11 +166,11 @@ PCM_METHODS: dict[str, str] = {
 
 # MOIST's DROP cavities, for the same PCM models: a solvent model "<model>/<cavity>",
 # e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth solvent-excluded-like surface over
-# MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
-# e/bohr^3), which follows the density through the SCF.  On the pyscf driver
-# (tautomator.pyscf_moist) they need the moist pixi environment; on the psi4 driver
-# (psi4-swig-pcm's MOIST host) the psi4 environment, which has MOIST.  Normalized name
-# (upper case, no hyphens) -> MOIST's name.
+# the same spheres as PySCF's cavity (pcm_radii), rho-DROP the electron isodensity
+# surface (rho_iso = 1e-3 e/bohr^3), which follows the density through the SCF.  On the
+# pyscf driver (tautomator.pyscf_moist) they need the moist pixi environment; on the psi4
+# driver (psi4-swig-pcm's MOIST host) the psi4 environment, which has MOIST.  Normalized
+# name (upper case, no hyphens) -> MOIST's name.
 DROP_CAVITIES: dict[str, str] = {
     "SVDWDROP": "SvdW-DROP",
     "RHODROP": "rho-DROP",
@@ -189,6 +192,29 @@ DROP_COMPONENTS: dict[str, str] = {
 #: of the SvdW-DROP points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost
 #: scales with the points.
 DROP_PRUNE_LEVEL = 4
+
+#: PySCF's PCM vdw_scale: every cavity's spheres are the modified Bondi radii times this.
+PCM_VDW_SCALE = 1.2
+
+
+def pcm_radii(hydrogen_radius: float = 1.1) -> NDArray[np.float64]:
+    """The PCM spheres' radii (bohr) by atomic number, on every cavity tautomator builds.
+
+    PySCF's own cavity's: its modified Bondi radii (pyscf.solvent.pcm.modified_Bondi,
+    1.999999 A for elements without a Bondi value) with hydrogen at hydrogen_radius
+    (Angstrom), times PCM_VDW_SCALE, with no probe.  The DROP cavities take this table
+    rather than MOIST's own radii, which are up to 13% smaller on the p-block elements
+    (O 1.72 A against 1.82, Si 2.20 against 2.52), a third smaller on the alkali metals and
+    a third larger on Cu and Zn: SvdW-DROP's IEF-PCM solvation energy of formate is 3.6
+    kcal/mol less negative on this table (HF/def2-SVP).  psi4-swig-pcm's
+    modified_bondi_radii is the same table, which psi4_runner gives both of its cavities.
+    """
+    import pyscf.solvent.pcm as pcm
+    from pyscf.data.radii import BOHR
+
+    radii = np.array(pcm.modified_Bondi, dtype=np.float64)
+    radii[1] = hydrogen_radius / BOHR
+    return PCM_VDW_SCALE * radii
 
 
 def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
@@ -776,15 +802,17 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -
             "the moist pixi environment: `pixi install -e moist` (it compiles MOIST), then "
             "run with `pixi run -e moist ...`."
         )
+    drop = drop_solvent_model(model)
     for name, radius in (
         ("[scoring]", scoring.pcm_hydrogen_radius),
         ("[refinement]", ref.pcm_hydrogen_radius),
     ):
-        if radius != 1.1:
+        if drop is not None and drop[1] == "rho-DROP" and radius != 1.1:
             raise ValueError(
-                f"{name} pcm_hydrogen_radius = {radius} sets the hydrogen radius of the "
-                f"switching/Gaussian PCM cavity; solvent_model = {model!r} builds MOIST's "
-                "cavity, with MOIST's radii. Remove it."
+                f"{name} pcm_hydrogen_radius = {radius} would change nothing on "
+                f"solvent_model = {model!r}: rho-DROP's surface is the density's contour, "
+                "and the radii only place its points. Remove it, or use SvdW-DROP or PySCF's "
+                "cavity, whose spheres it sizes."
             )
     # Psi4 takes its frequencies as finite differences of analytical gradients, which
     # MOIST has; PySCF's are analytical Hessians, which MOIST does not have.

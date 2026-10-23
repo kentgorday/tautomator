@@ -121,16 +121,23 @@ class TestMoistBlock:
         block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
         assert f"DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})" in block
 
-    def test_is_python_on_moists_own_radii(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
+    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
+    def test_is_python_on_the_switching_cavitys_spheres(self, model: str) -> None:
+        # never MOIST's own radii: the same table as the switching/Gaussian cavity's
+        block = _pcm_block(model, "water", incore_mb=1000)
         compile(block, "<moist block>", "exec")
-        assert "psi4_swig_pcm.enable(MoistSettings(" in block
-        assert "modified_bondi_radii" not in block and "PCMSettings" not in block
+        assert "psi4_swig_pcm.enable(MoistSettings(" in block and "PCMSettings" not in block
+        assert "_radii = modified_bondi_radii(hydrogen=1.1)\n" in block
+        assert "radii=moist.CustomRadii(_radii[1:], numbers=range(1, len(_radii)))" in block
 
-    def test_hydrogen_radius_raises(self) -> None:
-        # as on pyscf_runner: MOIST's cavity has radii of its own
+    def test_hydrogen_radius_sizes_svdw_drops_spheres(self) -> None:
+        block = _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3, incore_mb=1000)
+        assert "_radii = modified_bondi_radii(hydrogen=1.3)\n" in block
+
+    def test_hydrogen_radius_raises_on_rho_drop(self) -> None:
+        # as on pyscf_runner: the radii only place the isodensity surface's points
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3, incore_mb=1000)
+            _pcm_block("IEFPCM/rho-DROP", "water", 1.3, incore_mb=1000)
 
     def test_unknown_cavity_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):

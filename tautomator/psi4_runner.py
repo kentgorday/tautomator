@@ -185,8 +185,10 @@ def _pcm_block(
     SCF iterations; _solvation sizes it.
 
     A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
-    with the cavity and pruning pyscf_runner gives MOIST.  pcm_hydrogen_radius is refused
-    there, as pyscf_runner refuses it: MOIST has radii of its own.
+    with the cavity and pruning pyscf_runner gives MOIST, on the switching/Gaussian
+    cavity's spheres (modified_bondi_radii, pyscf_runner's config.pcm_radii) rather than
+    MOIST's own radii.  On rho-DROP pcm_hydrogen_radius is refused, as pyscf_runner
+    refuses it: there the radii only place the isodensity surface's points.
     """
     eps = solvent_dielectric(solvent)
     preamble = (
@@ -197,16 +199,19 @@ def _pcm_block(
     )
     drop = drop_solvent_model(solvent_model)
     if drop is not None:
-        if pcm_hydrogen_radius != 1.1:
-            raise ValueError(
-                f"pcm_hydrogen_radius = {pcm_hydrogen_radius} applies to the switching/Gaussian "
-                f"PCM cavity, not to {solvent_model!r} (MOIST's radii)"
-            )
         pcm_method, cavity = drop
+        if cavity == "rho-DROP" and pcm_hydrogen_radius != 1.1:
+            raise ValueError(
+                f"pcm_hydrogen_radius = {pcm_hydrogen_radius} would change nothing on "
+                f"{solvent_model!r}: the radii only place the isodensity surface's points"
+            )
         moist_settings = (
+            "from psi4_swig_pcm.cavity import modified_bondi_radii\n"
+            f"_radii = modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r})\n"
             "psi4_swig_pcm.enable(MoistSettings(\n"
             f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
-            f"parameters=moist.DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
+            f"parameters=moist.DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL}), "
+            "radii=moist.CustomRadii(_radii[1:], numbers=range(1, len(_radii)))),\n"
             f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
             f"    incore_mb={incore_mb},\n"
             "))\n"
