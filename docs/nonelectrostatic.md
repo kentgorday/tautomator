@@ -248,13 +248,23 @@ correction is applied after the SCF, so this costs no quantum chemistry.
 
 ### Saved descriptors
 
-With `[scoring] nonelectrostatic_descriptors = true` (PySCF, with IEF-PCM, C-PCM
-or COSMO), scoring reads the descriptors off each conformer's solvated single
-point and writes `<output_dir>/nonelectrostatic.npz`; `run_mnsol_set.py` turns
-it on for every solvent run. The file holds every conformer scored in solution,
-the ones scoring's energy window then drops included, since the correction can
-bring one of them back into the window. The ensemble.json beside it has only
-those the window kept.
+They are not part of the config schema: the fit is a one-time job, and
+`scripts/run_mnsol_set.py` asks for them through `run_pipeline(...,
+descriptors=[...])` (PySCF, with IEF-PCM, C-PCM or COSMO on PySCF's cavity or a
+DROP cavity). Scoring then reads the descriptors off each conformer's solvated
+single point and writes `<output_dir>/nonelectrostatic.npz`. The file holds
+every conformer scored in solution, the ones scoring's energy window then drops
+included, since the correction can bring one of them back into the window. The
+ensemble.json beside it has only those the window kept.
+
+Each further model in `descriptors` (run_mnsol_set.py's default: `IEFPCM` on
+PySCF's cavity and `IEFPCM/rho-DROP`, beside its own `IEFPCM/SvdW-DROP`) adds
+one more solvated single point per conformer at the same geometry, written to a
+file of its own (`descriptor_file(model)`, e.g.
+`nonelectrostatic_iefpcm_rhodrop.npz`) with the same gas-phase energy and RRHO,
+that model's PCM energy and descriptors, and in its settings the model the
+geometries came from (`geometry_solvent_model`) and any conformer that failed
+there (`failed`). A fit can then choose its cavity without rerunning anything.
 
 ```python
 from tautomator.nonelectrostatic import load_descriptors
@@ -415,13 +425,13 @@ density carries that noise. A variational energy does not see it; the
 post-SCF G does, and its finite differences divide it by the step. The
 finite-difference tests use MOIST's dense solver.
 
-**Descriptors.** `drop_descriptors` (and scoring with
-`nonelectrostatic_descriptors` on a DROP model) gives the same `Descriptors`:
+**Descriptors.** `drop_descriptors` (and scoring with descriptors on a DROP
+model) gives the same `Descriptors`:
 per surface point the area, the solute's normal field, the PCM's charge recast
 as a field (its correlation with the normal field is 0.97 on formate) and the
 atom whose sphere the point was projected from. The file's settings record the
-cavity, MOIST's pruning level and the quadrature (`volume_rule`, `ray_rule`,
-`partition_a`).
+cavity, MOIST's grid and pruning level (`drop_nleb`, `drop_prune_level`) and
+the quadrature (`volume_rule`, `ray_rule`, `partition_a`).
 
 **How fine the grids need to be, in kcal/mol.** The same 42 solutes as on
 PySCF's cavity (25 neutrals, 17 ions; wB97X-3c/vDZP, density fixed), rough
@@ -439,7 +449,7 @@ MOIST's nleb 1202), max error / RMS:
 | all-space (35, 24, 1.5) | 0.013 / 0.003 | 0.013 / 0.003 |
 | rays (8, 1.0) | 0.005 / 0.003 | 0.004 / 0.003 |
 | **rays (12, 1.0) (default)** | 0.001 / 0.000 | 0.001 / 0.000 |
-| MOIST's surface, nleb 194 (its default) | 0.072 / 0.023 | 0.062 / 0.022 |
+| MOIST's surface, nleb 194 (MOIST's default) | 0.072 / 0.023 | 0.062 / 0.022 |
 | MOIST's surface, nleb 302 | 0.041 / 0.013 | 0.037 / 0.013 |
 | MOIST's surface, nleb 590 | 0.021 / 0.006 | 0.020 / 0.006 |
 
@@ -448,6 +458,30 @@ MOIST's nleb 1202), max error / RMS:
 over all space, which hardly depends on the cavity.) The all-space grid needs its 16 radial nodes;
 with them, MOIST's own surface is the largest error, as on PySCF's cavity, and
 it falls with nleb, which also refines the PCM.
+
+**MOIST's surface resolution**, which sets the PCM's own accuracy as much as
+the correction's. The IEF-PCM energy on the same 42 solutes at a fixed density,
+against nleb 1202, with the target of 0.1 kcal/mol or 1e-3 relative (worst ion
+/ worst neutral, kcal/mol; solutes within the target; the correction's worst
+error with the rough parameters above):
+
+| nleb / pruning | points | SvdW-DROP | rho-DROP | within (SvdW / rho) | G worst |
+|---|---|---|---|---|---|
+| 194 / 4 (MOIST's default) | 1.00x | 0.28 / 0.08 | 0.25 / 0.08 | 26 / 27 | 0.072 / 0.062 |
+| 302 / 4 | 1.45x | 0.14 / 0.04 | 0.12 / 0.03 | 34 / 37 | 0.041 / 0.037 |
+| 350 / 4 | 1.63x | 0.14 / 0.04 | 0.12 / 0.03 | 38 / 40 | 0.047 / 0.044 |
+| **434 / 4 (config.DROP_NLEB, DROP_PRUNE_LEVEL)** | 1.97x | 0.086 / 0.023 | 0.073 / 0.022 | 42 / 42 | 0.023 / 0.024 |
+| 590 / 4 | 2.58x | 0.052 / 0.013 | 0.046 / 0.012 | 42 / 42 | 0.021 / 0.020 |
+
+The worst cases are small anions (phenoxide, methoxide, the cyanomethyl
+anion). Pruning level 4 is free: at 434 it drops 11% of the points (14% at
+most) and moves the PCM energy by under 1e-6 kcal/mol and the integrals by
+under 2e-6 relative. Level 5 is as harmless up to nleb 302 but at 590 moves
+the correction by up to 0.09 kcal/mol. 434 costs the PCM 2.0-2.3x its time at
+194, and at def2-QZVPPD with `memory_gb = 12` the surface integrals of 73% of
+the MNSol subset fit in core, against 96% at 194. With as many points as
+PySCF's Lebedev order 29 (302 here), DROP's worst ion is 0.12-0.14 kcal/mol
+against 0.19 on PySCF's cavity.
 
 **What the relaxation is worth** on DROP, as on PySCF's cavity (rough
 parameters, exponent 2.5, c- and c+ set on each cavity to give acetate -15 and

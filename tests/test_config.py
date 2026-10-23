@@ -96,7 +96,7 @@ class TestDriverDefaults:
         # refinement energy is to minimize in solvent outright.
         assert cfg.refinement.solvation == "optimize"
         assert (cfg.scoring.method, cfg.scoring.basis) == ("wB97M-V", "def2-QZVPPD")
-        assert cfg.scoring.solvent_model == "IEFPCM"
+        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
 
     def test_psi4_minimizes_in_solvent_too(self, tmp_toml: Callable[[str], Path]) -> None:
         # psi4-swig-pcm gives Psi4 analytical PCM gradients as well.
@@ -109,7 +109,7 @@ class TestDriverDefaults:
         """)
         )
         assert cfg.refinement.solvation == "optimize"
-        assert cfg.scoring.solvent_model == "IEFPCM"
+        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
 
     def test_gas_phase_scoring_makes_refinement_gas_phase(
         self, tmp_toml: Callable[[str], Path]
@@ -216,7 +216,7 @@ class TestProtocols:
         """)
         )
         assert cfg.refinement.solvation == "optimize"
-        assert cfg.scoring.solvent_model == "IEFPCM"
+        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
 
     @pytest.mark.parametrize("protocol", ["high_quality", "fast"])
     @pytest.mark.parametrize("own_solvation", ["", 'solvation = "none"'])
@@ -310,7 +310,7 @@ class TestProtocols:
         assert prov["refinement"]["solvation"] == {
             "mode": "single_point",
             "level": "wB97X-3c/vDZP",
-            "model": "IEFPCM",
+            "model": "IEFPCM/SvdW-DROP",
             "driver": "pyscf",
         }
         assert prov["scoring"]["basis"] == "def2-TZVPPD"
@@ -894,6 +894,8 @@ class TestDeprecatedSpellings:
                 smiles = "CCO"
                 [refinement]
                 rrho_method = "dft"
+                [scoring]
+                solvent_model = "IEFPCM"
             """)
             )
         assert cfg.refinement.rrho == "refinement"
@@ -1046,46 +1048,6 @@ class TestFixedSpecies:
             )
 
 
-class TestNonelectrostaticDescriptors:
-    def _load(
-        self, tmp_toml: Callable[[str], Path], scoring: str, driver: str = "pyscf"
-    ) -> PkaConfig:
-        return load_config(
-            tmp_toml(f"""
-                protocol = "high_quality"
-                [molecule]
-                smiles = "CCO"
-                [scoring]
-                {scoring}
-                [compute]
-                driver = "{driver}"
-            """)
-        )
-
-    def test_off_by_default(self, tmp_toml: Callable[[str], Path]) -> None:
-        assert not self._load(tmp_toml, "").scoring.nonelectrostatic_descriptors
-
-    @pytest.mark.parametrize("model", ["IEF-PCM", "CPCM", "COSMO"])
-    def test_on_with_a_pcm_model(self, tmp_toml: Callable[[str], Path], model: str) -> None:
-        config = self._load(
-            tmp_toml, f'nonelectrostatic_descriptors = true\nsolvent_model = "{model}"'
-        )
-        assert config.scoring.nonelectrostatic_descriptors
-
-    def test_needs_pyscf(self, tmp_toml: Callable[[str], Path]) -> None:
-        with pytest.raises(ValueError, match="driver = 'pyscf'"):
-            self._load(tmp_toml, "nonelectrostatic_descriptors = true", driver="psi4")
-
-    @pytest.mark.parametrize(
-        ("model", "given"), [("none", "gas-phase scoring"), ("SMD", "solvent_model = 'SMD'")]
-    )
-    def test_needs_an_analytical_pcm(
-        self, tmp_toml: Callable[[str], Path], model: str, given: str
-    ) -> None:
-        with pytest.raises(ValueError, match=f"analytical PCM .* not {given}"):
-            self._load(tmp_toml, f'nonelectrostatic_descriptors = true\nsolvent_model = "{model}"')
-
-
 class TestDropSolventModels:
     """MOIST's DROP cavities as solvent models "<PCM model>/<cavity>", on either driver."""
 
@@ -1226,7 +1188,7 @@ class TestDropSolventModels:
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:
         moist_installed(False)
-        with pytest.raises(ValueError, match="moist pixi environment"):
+        with pytest.raises(ValueError, match="needs MOIST"):
             self._load(tmp_toml, "IEFPCM/SvdW-DROP")
 
     @pytest.mark.parametrize("section", ["scoring", "refinement"])
@@ -1253,14 +1215,3 @@ class TestDropSolventModels:
             refinement='rrho = "refinement"\nsolvation = "single_point"',
         )
         assert config.refinement.rrho == "refinement"
-
-    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "CPCM/rho-DROP"])
-    def test_nonelectrostatic_descriptors_on_drop(
-        self,
-        tmp_toml: Callable[[str], Path],
-        moist_installed: Callable[[bool], None],
-        model: str,
-    ) -> None:
-        moist_installed(True)
-        config = self._load(tmp_toml, model, scoring="nonelectrostatic_descriptors = true")
-        assert config.scoring.nonelectrostatic_descriptors

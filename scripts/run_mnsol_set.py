@@ -18,27 +18,33 @@ The logP-only solutes need no gas run: logP is G(woctanol) - G(water).
 
 Output goes to <output-root>/<medium>/<solute>/, each a normal pipeline output
 directory (sampling/, refinement/, ensemble.json, config.toml).  A solvent run
-also saves every conformer it scored, with its energies and nonelectrostatic
-descriptors, to nonelectrostatic.npz ([scoring] nonelectrostatic_descriptors;
-read it with nonelectrostatic.load_descriptors): the fit reweights the
-conformers from there without any quantum chemistry.  About 50 kB per scored
-conformer, and a quarter on top of the scoring time.
+minimizes and scores in IEF-PCM on MOIST's SvdW-DROP cavity (--solvent-model),
+and saves every conformer it scored, with its energies and nonelectrostatic
+descriptors, to nonelectrostatic.npz; and the same at the same geometries in
+IEF-PCM on PySCF's switching/Gaussian cavity and on rho-DROP
+(--descriptor-models), to nonelectrostatic_iefpcm.npz and
+nonelectrostatic_iefpcm_rhodrop.npz (read any with
+nonelectrostatic.load_descriptors).  The fit reweights the conformers from
+there without any quantum chemistry, on whichever cavity it chooses.  The
+descriptors are not a config setting: main() asks run_pipeline for them.  Each
+further cavity costs one more solvated single point per conformer; rho-DROP's
+rebuilds its surface every SCF iteration and costs the most.
 
 Solutes run in CSV order, all of one solute's media before the next solute, so
 a partial run leaves complete solvation free energies behind.  Failures are
 caught per run and written to ERROR.txt in its directory; --resume skips
 finished runs and picks up unfinished ones at their last completed stage.  A
-solvent run finished without its descriptors file counts as unfinished, and
-reruns scoring.
+solvent run finished without all its descriptor files counts as unfinished,
+and reruns scoring.
 
 PySCF is the default driver here.  At high_quality on an M-series Mac (8
 threads, sampling reused) the two drivers refined in the same time, but Psi4
 scored at def2-QZVPPD 1.2-1.4x slower: toluene in water 215 s against PySCF's
 199 s at memory_gb 4 (Psi4 at 12 GB; at 4 GB, 242 s), toluene in the gas phase
-100 s against 82 s, acetate in water 46 s against 37 s.  Those Psi4 runs kept
-no PCM surface integrals; both drivers now keep them in core when they fit in
-half of --memory, which at the default 12 GB holds at def2-QZVPPD for 81% of the
-set (toluene's PySCF PCM single point: 107 s at 4 GB, 61 s at 8).  And the
+100 s against 82 s, acetate in water 46 s against 37 s (all on PySCF's cavity).
+Both drivers keep the PCM's surface integrals in core when they fit in half of
+--memory; at the default 12 GB and def2-QZVPPD that holds for 73% of the set on
+SvdW-DROP at its nleb 434 (config.DROP_NLEB) and 81% on PySCF's cavity.  And the
 nonelectrostatic descriptors can only be read off a PySCF mean field
 (pyscf_nonelectrostatic), so a Psi4 run needs --no-descriptors.  Run one job at
 a time on a 24 GB machine: toluene's scoring job peaked at 10.5 GB, and at 12 GB
@@ -65,8 +71,13 @@ from pathlib import Path
 
 from tautomator.batch import compound_dir_name
 from tautomator.config import DEFAULT_MEMORY_GB, PROTOCOLS, load_config
-from tautomator.nonelectrostatic import DESCRIPTOR_FILE
+from tautomator.nonelectrostatic import descriptor_file
 from tautomator.pipeline import run_pipeline
+
+# The model solvent runs minimize and score in, and the further models whose descriptors
+# scoring saves at the same geometries: the three cavities a fit can choose between.
+SOLVENT_MODEL = "IEFPCM/SvdW-DROP"
+DESCRIPTOR_MODELS = ("IEFPCM", "IEFPCM/rho-DROP")
 
 # Medium -> the reference columns that need a run in it.
 MEDIA: dict[str, tuple[str, ...]] = {
@@ -91,23 +102,21 @@ def make_toml(
     threads: int,
     memory_gb: float,
     protocol: str,
-    descriptors: bool,
+    solvent_model: str,
 ) -> str:
     """The config for one solute in one medium.
 
-    The protocol sets every level of theory and window; a gas-phase run only
-    switches scoring to the gas phase, which takes refinement, sampling and the
-    RRHO there with it.  Its [molecule] solvent is unused, and it has no
-    descriptors: there is no cavity in the gas phase.
+    The protocol sets every level of theory and window; a solvent run minimizes and
+    scores in ``solvent_model``, and a gas-phase run only switches scoring to the gas
+    phase, which takes refinement, sampling and the RRHO there with it.  Its
+    [molecule] solvent is unused, and it has no descriptors: there is no cavity in
+    the gas phase.  The descriptors are not in the config: main() asks run_pipeline
+    for them.
     """
     safe_smiles = smiles.replace('"', '\\"')
     gas = medium == "gas"
-    if gas:
-        scoring = '[scoring]\nsolvent_model = "none"\n\n'
-    elif descriptors:
-        scoring = "[scoring]\nnonelectrostatic_descriptors = true\n\n"
-    else:
-        scoring = ""
+    model = "none" if gas else solvent_model
+    scoring = f'[scoring]\nsolvent_model = "{model}"\n\n'
     return f'''\
 protocol = "{protocol}"
 
@@ -150,6 +159,22 @@ def main() -> None:
         help=(
             f"per-QM-job memory in GB (default: {DEFAULT_MEMORY_GB}).  Either driver "
             "keeps the PCM's surface integrals in core only when they fit in half of it."
+        ),
+    )
+    parser.add_argument(
+        "--solvent-model",
+        default=SOLVENT_MODEL,
+        help=f"the model solvent runs minimize and score in (default: {SOLVENT_MODEL})",
+    )
+    parser.add_argument(
+        "--descriptor-models",
+        nargs="*",
+        default=list(DESCRIPTOR_MODELS),
+        metavar="MODEL",
+        help=(
+            "further solvent models to save descriptors on, at the same geometries, one "
+            "more solvated single point per conformer each (default: "
+            f"{' '.join(DESCRIPTOR_MODELS)}; none: pass the flag alone)"
         ),
     )
     parser.add_argument(
@@ -216,8 +241,9 @@ def main() -> None:
         run_dir = args.output_root / medium / compound_dir_name(uid)
         label = f"[{i}/{len(runs)}] {uid} ({smiles}) in {medium}"
         descriptors = args.descriptors and medium != "gas"
+        files = [descriptor_file(m) for m in (None, *args.descriptor_models)]
         finished = (run_dir / "ensemble.json").exists() and (
-            not descriptors or (run_dir / DESCRIPTOR_FILE).exists()
+            not descriptors or all((run_dir / f).exists() for f in files)
         )
         if args.resume and finished:
             log.info(f"{label}: already done, skipping")
@@ -237,10 +263,14 @@ def main() -> None:
                 args.threads,
                 args.memory,
                 args.protocol,
-                descriptors,
+                args.solvent_model,
             )
             (run_dir / "config.toml").write_text(toml)
-            run_pipeline(load_config(run_dir / "config.toml"), resume=args.resume)
+            run_pipeline(
+                load_config(run_dir / "config.toml"),
+                resume=args.resume,
+                descriptors=args.descriptor_models if descriptors else None,
+            )
             n_ok += 1
             log.info(f"{label}: done")
         except Exception as e:

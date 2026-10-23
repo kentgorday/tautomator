@@ -164,10 +164,10 @@ PCM_METHODS: dict[str, str] = {
 # MOIST's DROP cavities, for the same PCM models: a solvent model "<model>/<cavity>",
 # e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth solvent-excluded-like surface over
 # MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
-# e/bohr^3), which follows the density through the SCF.  On the pyscf driver
-# (tautomator.pyscf_moist) they need the moist pixi environment; on the psi4 driver
-# (psi4-swig-pcm's MOIST host) the psi4 environment, which has MOIST.  Normalized name
-# (upper case, no hyphens) -> MOIST's name.
+# e/bohr^3), which follows the density through the SCF.  On the pyscf driver they run
+# through tautomator.pyscf_moist, on the psi4 driver through psi4-swig-pcm's MOIST host;
+# both the default and the psi4 environment have MOIST.  Normalized name (upper case, no
+# hyphens) -> MOIST's name.
 DROP_CAVITIES: dict[str, str] = {
     "SVDWDROP": "SvdW-DROP",
     "RHODROP": "rho-DROP",
@@ -184,10 +184,22 @@ DROP_COMPONENTS: dict[str, str] = {
     "COSMO": "ModelComponentCOSMO",
 }
 
+#: MOIST's Lebedev points per sphere for the DROP cavities (DROPParameters.nleb), on both
+#: drivers.  MOIST's default, 194, puts the IEF-PCM energy within 0.1 kcal/mol or 1e-3 of
+#: converged for only 26 of 42 solutes (25 neutrals, 17 ions; wB97X-3c/vDZP, against nleb
+#: 1202): small anions are off by up to 0.28 kcal/mol (phenoxide).  434 is the smallest size
+#: that holds all 42, on SvdW- and rho-DROP alike (worst 0.086 and 0.073 kcal/mol, neutrals
+#: 0.023), and it keeps the nonelectrostatic correction within 0.024 kcal/mol.  It has twice
+#: the points of 194: the PCM's own time 2.0-2.3x, and at def2-QZVPPD with memory_gb = 12 the
+#: (k|mn) of 73% of the MNSol subset fit in core (96% at 194).  docs/nonelectrostatic.md.
+DROP_NLEB = 434
+
 #: MOIST's smooth pruning of near-zero quadrature weights (DROPParameters.wleb_prune_level),
-#: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  On acetaminophen it drops 14%
-#: of the SvdW-DROP points and leaves the C-PCM energy unchanged to 1e-8 Ha; every cost
-#: scales with the points.
+#: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  At nleb 434 it drops 11% of the
+#: points (14% at most) and moves the PCM energy by under 1e-6 kcal/mol and the
+#: nonelectrostatic integrals by under 2e-6 relative (42 solutes, both cavities); every cost
+#: scales with the points.  Level 5 (1e-4 to 1e-2) is as harmless up to nleb 302, but at 590
+#: it moves the nonelectrostatic correction by up to 0.09 kcal/mol.
 DROP_PRUNE_LEVEL = 4
 
 
@@ -214,7 +226,8 @@ PCM_SWITCHING = "ISWIG"
 
 # Implicit-solvent models, by the driver that can run them.  One model is used
 # for every solvation energy in a run, so the refinement filter ranks on the
-# same physics scoring does.  Both drivers default to IEF-PCM.  SS(V)PE is not
+# same physics scoring does.  Both drivers default to IEF-PCM on SvdW-DROP
+# (_DEFAULT_SOLVENT_MODEL); "IEFPCM" alone is PySCF's switching/Gaussian cavity.  SS(V)PE is not
 # offered: it symmetrizes the system matrix, and on this surface that moved the
 # solvation energy of acetate and methylammonium by 2.7 and 4.2 kcal/mol and did
 # not converge with the surface grid (the ill behaviour Lange & Herbert
@@ -405,9 +418,6 @@ class ScoringConfig:
     solvent_model: str | None = None  # the run's implicit-solvent model
     ewin: float = 10.0
     pcm_hydrogen_radius: float = 1.1  # PCM cavity radius (Angstrom) for hydrogen
-    # Save every solvated conformer's nonelectrostatic descriptors with its
-    # energies (<output_dir>/nonelectrostatic.npz), for fitting the correction.
-    nonelectrostatic_descriptors: bool = False
 
 
 @dataclass
@@ -497,7 +507,12 @@ PROTOCOLS: dict[str, dict[str, dict[str, Any]]] = {
 
 _DFT_REFINEMENT_DEFAULT_METHOD = "wB97X-3c"
 _SCORING_DEFAULTS = {"method": "wB97M-V", "basis": "def2-QZVPPD"}
-_DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM", "psi4": "IEFPCM"}
+# IEF-PCM on MOIST's SvdW-DROP cavity, on both drivers: a smooth solvent-excluded-like surface,
+# more accurate per surface point than the switching/Gaussian spheres (with as many points as
+# PySCF's Lebedev order 29, the worst ion error in the PCM energy over the 42-solute set is
+# 0.14 kcal/mol, against 0.19 on the spheres), and the nonelectrostatic correction runs on it
+# with its gradients (docs/nonelectrostatic.md).  DROP_NLEB gives it twice those points.
+_DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM/SvdW-DROP", "psi4": "IEFPCM/SvdW-DROP"}
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +631,6 @@ def _build_scoring(raw: dict[str, Any], driver: str) -> ScoringConfig:
         solvent_model=model,
         ewin=raw.get("ewin", 10.0),
         pcm_hydrogen_radius=raw.get("pcm_hydrogen_radius", 1.1),
-        nonelectrostatic_descriptors=raw.get("nonelectrostatic_descriptors", False),
     )
 
 
@@ -722,23 +736,6 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
         if drop_solvent_model(scoring.solvent_model) is not None:
             _validate_drop(ref, scoring, compute.driver)
 
-    if scoring.nonelectrostatic_descriptors:
-        if compute.driver != "pyscf":
-            raise ValueError(
-                "[scoring] nonelectrostatic_descriptors needs [compute] driver = 'pyscf': "
-                "the descriptors are read off the PySCF mean field of the solvated "
-                "single point."
-            )
-        model = scoring.solvent_model
-        drop = drop_solvent_model(model) is not None
-        if model is None or not (drop or model.upper().replace("-", "") in PCM_METHODS):
-            given = "gas-phase scoring" if model is None else f"solvent_model = {model!r}"
-            raise ValueError(
-                "[scoring] nonelectrostatic_descriptors needs an analytical PCM solvent "
-                f"model (IEF-PCM, C-PCM or COSMO, on PySCF's cavity or a DROP cavity), "
-                f"not {given}"
-            )
-
     _validate_prefilter(ref)
 
     if ref.rrho == "refinement" and ref.engine == "psi4":
@@ -769,9 +766,9 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -
     # psi4_runner.check_installed(drop=True) checks for when the run picks its driver.
     if driver == "pyscf" and importlib.util.find_spec("moist") is None:
         raise ValueError(
-            f"[scoring] solvent_model = {model!r} needs MOIST, which is installed only in "
-            "the moist pixi environment: `pixi install -e moist` (it compiles MOIST), then "
-            "run with `pixi run -e moist ...`."
+            f"[scoring] solvent_model = {model!r} needs MOIST, which this environment does "
+            "not have: the default pixi environment has it (`pixi install`; the first "
+            "install compiles MOIST)."
         )
     for name, radius in (
         ("[scoring]", scoring.pcm_hydrogen_radius),

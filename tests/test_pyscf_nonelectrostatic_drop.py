@@ -11,7 +11,7 @@ Formate at HF/def2-SVP on SvdW-DROP and rho-DROP, against central differences:
 MOIST's PCM solves its charges iteratively to 1e-8 by default, which leaves noise of that
 order in the SCF density; G is not variational, so its differences would carry it divided by
 the step.  The SCFs here use MOIST's dense solver.  Runs only where MOIST is installed (the
-moist pixi environment).
+default pixi environment).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 if importlib.util.find_spec("moist") is None:
-    pytest.skip("MOIST is installed only in the moist pixi environment", allow_module_level=True)
+    pytest.skip("MOIST is not installed in this environment", allow_module_level=True)
 
 import moist
 from pyscf import gto, scf
@@ -130,11 +130,17 @@ def test_exported_contractions(cavity: str, density: np.ndarray) -> None:
         driver.host.dm = density
         g = g + driver.host._gradient_lsf(s.xyz, density_weights)
     coords = _mol().atom_coords()
+
+    def area_functional(c: np.ndarray) -> float:
+        return functional(snapshot(_mol(c)).model.cavity.snapshot())
+
     for atom, k in COMPONENTS:
-        fd = _difference(
-            lambda c: functional(snapshot(_mol(c)).model.cavity.snapshot()), coords, atom, k, 1e-4
-        )
-        assert g[atom, k] == pytest.approx(fd, rel=1e-6, abs=1e-6)
+        # Richardson: steps of 1e-4 alone leave ~1e-6 of curvature on these surfaces
+        fd = (
+            4.0 * _difference(area_functional, coords, atom, k, 1e-4)
+            - _difference(area_functional, coords, atom, k, 2e-4)
+        ) / 3.0
+        assert g[atom, k] == pytest.approx(fd, rel=1e-7, abs=1e-7)
 
 
 @pytest.mark.parametrize("cavity", CAVITIES)

@@ -109,10 +109,11 @@ python = "3.13.*"
 # it was built with, which holds this to 1.11.x.
 psi4 = ">=1.11,<2"
 # Implicit solvent: psi4_runner's input decks import it.  The same
-# switching/Gaussian PCM as PySCF's, with analytical gradients (LGPL-3.0, like
-# Psi4, hence a repository of its own).  Built from source by pixi-build; the
-# commit is pinned in pixi.lock, and `pixi update psi4-swig-pcm` moves it.
-psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git" }
+# switching/Gaussian PCM as PySCF's, and a host for MOIST's DROP cavities, with
+# analytical gradients and the nonelectrostatic correction (LGPL-3.0, like Psi4,
+# hence a repository of its own).  Built from source by pixi-build, at the commit
+# `rev` names (its nonelectrostatic-drop branch, until that is on its main).
+psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "6d515cc386fad9f1da72f545758e41f60ee02606" }
 # Psi4's optimizer (optking) converts units through qcelemental's pint registry, which
 # qcelemental 0.51.2 and 0.51.3 cannot build under pint 0.26.2 (pint rejects their
 # "J^{-2}"): with either, psi4.optimize fails.  0.51.4 works with pint 0.26.1 and 0.26.2.
@@ -123,21 +124,21 @@ dftd3-python = ">=1.0"
 dftd4-python = ">=4.0"
 gcp-correction = ">=2.3.2,<3"
 
-# MOIST (experimental): its SvdW-DROP and isodensity (rho-DROP) cavities for the PCM
-# models, as solvent_model "<model>/<cavity>": PySCF's through tautomator.pyscf_moist (the
-# moist environment), Psi4's through psi4-swig-pcm's MOIST host (the psi4 environment); the
-# nonelectrostatic correction does not use them yet.  Built from source by pixi-build,
-# from the recipe in psi4-swig-pcm's repository (packages/moist: pinned to a MOIST
-# release), which psi4-swig-pcm builds its own moist environment from too: one recipe for
-# both.  Only the recipe comes from there; no Psi4 comes with it.  The commit is pinned in
-# pixi.lock, and `pixi update moist` moves it (`pixi update psi4-swig-pcm` moves both).
-# Installing it compiles MOIST (about 9 minutes on 4 cores, once: both environments get the
-# same build), which is why the default environment leaves it out while it is experimental.
+# MOIST: its SvdW-DROP and isodensity (rho-DROP) cavities for the PCM models, as
+# solvent_model "<model>/<cavity>" (IEFPCM/SvdW-DROP is the default): PySCF's through
+# tautomator.pyscf_moist, Psi4's through psi4-swig-pcm's MOIST host; the nonelectrostatic
+# correction's gradients on them need the surface contractions the recipe's patch 0002
+# exports.  Built from source by pixi-build, from the recipe in psi4-swig-pcm's repository
+# (packages/moist: pinned to a MOIST release), which psi4-swig-pcm builds its own moist
+# environment from too: one recipe for both.  Only the recipe comes from there; no Psi4 comes
+# with it.  `rev` pins the commit (psi4-swig-pcm's nonelectrostatic-drop branch, until that is
+# on its main), the same as psi4-swig-pcm's above.  The first install compiles MOIST (about 9
+# minutes on 4 cores, once: both environments get the same build).
 [feature.moist.dependencies]
-moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", subdirectory = "packages/moist" }
+moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "6d515cc386fad9f1da72f545758e41f60ee02606", subdirectory = "packages/moist" }
 
 [environments]
-default = { solve-group = "default" }
-# With MOIST, so that every Psi4 job of a run, DROP solvent models included, runs one Psi4.
+# Both with MOIST, as the default solvent model needs it.  Every Psi4 job of a run, DROP
+# solvent models included, runs the psi4 environment's one Psi4.
+default = { features = ["moist"], solve-group = "default" }
 psi4 = { features = ["psi4", "moist"], no-default-feature = true }
-moist = { features = ["moist"], solve-group = "default" }

@@ -8,9 +8,8 @@ import numpy as np
 import pytest
 
 from tautomator import pipeline
-from tautomator.config import load_config
+from tautomator.config import PkaConfig, load_config
 from tautomator.ensemble import serialize_ensemble
-from tautomator.nonelectrostatic import DESCRIPTOR_FILE
 from tautomator.types import ChargeState, Conformer, Ensemble, Geometry, Microstate
 
 
@@ -56,12 +55,17 @@ output_dir = "{tmp_path / "out"}"
 
 
 @pytest.mark.parametrize(
-    ("scoring", "saved"), [("", False), ("nonelectrostatic_descriptors = true", True)]
+    ("descriptors", "models"),
+    [(None, ()), ([], ()), (["IEFPCM", "CPCM/rho-DROP"], ("IEFPCM", "CPCM/rho-DROP"))],
 )
 def test_scoring_saves_descriptors_when_asked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scoring: str, saved: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    descriptors: list[str] | None,
+    models: tuple[str, ...],
 ) -> None:
-    """The descriptors go next to the run's ensemble.json, under their fixed name."""
+    """The descriptors (asked for by the caller, not the config) go next to the run's
+    ensemble.json, on the run's model and each further one."""
     seen: dict[str, object] = {}
 
     def fake_score(*args: object, **kwargs: object) -> None:
@@ -70,10 +74,49 @@ def test_scoring_saves_descriptors_when_asked(
 
     monkeypatch.setattr(pipeline, "score", fake_score)
     out = tmp_path / "out"
+    _refinement_checkpoint(out)
+    with pytest.raises(_Stop):
+        pipeline.run_pipeline(_config(tmp_path, out), resume=True, descriptors=descriptors)
+    assert seen["descriptors_dir"] == (None if descriptors is None else out)
+    assert seen["descriptor_models"] == models
+
+
+@pytest.mark.parametrize(
+    ("driver", "scoring", "descriptors", "match"),
+    [
+        ("psi4", "", [], "driver = 'pyscf'"),
+        ("pyscf", '[scoring]\nsolvent_model = "SMD"', [], "analytical PCM"),
+        ("pyscf", "", ["SMD"], "not an analytical PCM"),
+        ("pyscf", "", ["IEFPCM/SvdW-DROP"], "the run's own"),
+        ("pyscf", "", ["IEFPCM", "IEF-PCM"], "listed twice"),
+    ],
+)
+def test_descriptor_request_is_checked_before_any_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    driver: str,
+    scoring: str,
+    descriptors: list[str],
+    match: str,
+) -> None:
+    def fail(**kwargs: object) -> None:
+        raise AssertionError("a stage ran")
+
+    monkeypatch.setattr(pipeline, "run_approach1", fail)
+    with pytest.raises(ValueError, match=match):
+        pipeline.run_pipeline(
+            _config(tmp_path, tmp_path / "out", scoring, driver), descriptors=descriptors
+        )
+
+
+def _refinement_checkpoint(out: Path) -> None:
     geom = Geometry(("O", "H"), np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.97]]))
     ens = Ensemble("[OH-]")
     ens.charge_states[-1] = ChargeState(-1, [Microstate("[OH-]", [Conformer(geom, -75.0)])])
     serialize_ensemble(ens, out / "refinement")
+
+
+def _config(tmp_path: Path, out: Path, extra: str = "", driver: str = "pyscf") -> PkaConfig:
     toml = tmp_path / "config.toml"
     toml.write_text(
         f"""protocol = "high_quality"
@@ -83,12 +126,10 @@ charge_min = -1
 charge_max = -1
 [sampling]
 fixed_species = true
-[scoring]
-{scoring}
+{extra}
 [compute]
+driver = "{driver}"
 output_dir = "{out}"
 """
     )
-    with pytest.raises(_Stop):
-        pipeline.run_pipeline(load_config(toml), resume=True)
-    assert seen["descriptors_path"] == (out / DESCRIPTOR_FILE if saved else None)
+    return load_config(toml)

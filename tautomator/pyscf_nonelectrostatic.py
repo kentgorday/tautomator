@@ -19,7 +19,7 @@ def2-QZVPPD that affects iodine and heavier elements only.
 
 `single_point_with_descriptors` is `pyscf_runner.single_point` with the
 descriptors read off its mean field before it is discarded; scoring calls it
-when [scoring] nonelectrostatic_descriptors is on.
+when run_pipeline is asked for descriptors (scripts/run_mnsol_set.py).
 
 `NonelectrostaticTerms` is the correction itself, with the solute's own field in
 the surface term, as a function of the density matrix at one geometry: the

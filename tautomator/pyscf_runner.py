@@ -585,8 +585,8 @@ def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int
         from tautomator.pyscf_moist import attach, drop_cavity
     except ImportError as err:
         raise ImportError(
-            f"the {cavity} cavity needs MOIST, installed only in the moist pixi "
-            "environment (pixi install -e moist)"
+            f"the {cavity} cavity needs MOIST, which the default pixi environment has "
+            "(pixi install; the first install compiles it)"
         ) from err
     component = getattr(moist, DROP_COMPONENTS[pcm_method])(eps)
     context = moist.Context(nthreads=threads, verbosity=0)

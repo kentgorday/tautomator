@@ -14,6 +14,7 @@ import pytest
 from tautomator import psi4_runner, refinement, scoring
 from tautomator.config import (
     DEFAULT_MEMORY_GB,
+    DROP_NLEB,
     DROP_PRUNE_LEVEL,
     PCM_STORE_FRACTION,
     PCM_SWITCHING,
@@ -117,9 +118,9 @@ class TestMoistBlock:
         assert f"components=(moist.{component}({solvent_dielectric('water')!r}),)" in block
         assert f"cavity=moist.DROP(lsf=moist.{lsf}()," in block
 
-    def test_pruned_as_pyscf_runner_prunes(self) -> None:
+    def test_grid_and_pruning_as_pyscf_runner_gives_them(self) -> None:
         block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
-        assert f"DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})" in block
+        assert f"DROPParameters(nleb={DROP_NLEB}, wleb_prune_level={DROP_PRUNE_LEVEL})" in block
 
     def test_is_python_on_moists_own_radii(self) -> None:
         block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)

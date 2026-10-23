@@ -12,7 +12,7 @@
 # re-implements them; see NOTICE.
 """MOIST's DROP cavities on a PySCF mean field, with FastPCM's integral handling.
 
-MOIST (packages/moist, in the moist pixi environment) builds the cavity, solves the PCM and
+MOIST (packages/moist, in the default pixi environment) builds the cavity, solves the PCM and
 chains the cavity's motion into the nuclear gradient, in Fortran.  moist.pyscf's host answers
 MOIST's requests with PySCF integrals, and almost all of the time goes there; MoistHost
 answers the same requests sooner, and attach() puts MOIST on a mean field with it:
@@ -78,7 +78,7 @@ from pyscf import df, gto, lib
 from pyscf.lib import logger
 from scipy.special import erf
 
-from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL, PCM_STORE_FRACTION
+from tautomator.config import DROP_LSF, DROP_NLEB, DROP_PRUNE_LEVEL, PCM_STORE_FRACTION
 from tautomator.pyscf_fast_pcm import fingerprint
 
 Array = NDArray[np.float64]
@@ -88,6 +88,9 @@ log = logging.getLogger(__name__)
 #: MOIST's smooth pruning of near-zero quadrature weights (config.DROP_PRUNE_LEVEL says why).
 PRUNE_LEVEL = DROP_PRUNE_LEVEL
 
+#: Lebedev points per sphere of the DROP surface (config.DROP_NLEB says why).
+NLEB = DROP_NLEB
+
 #: Size of one block of surface integrals, in bytes, wherever they are not kept: libcint fills
 #: blocks this small 2-5x faster per point than one of a few hundred MB (int3c2e_ip1 on
 #: acetaminophen's whole surface: 2.0 s in 16 MB blocks, 9.4 s in one; best of 8 to 256 MB
@@ -96,19 +99,21 @@ BLOCK_BYTES = 16e6
 
 
 def drop_cavity(name: str, **parameters: Any) -> Any:
-    """A DROP cavity by name (config.DROP_LSF), with PRUNE_LEVEL pruning; ``parameters`` go
-    to DROPParameters."""
+    """A DROP cavity by name (config.DROP_LSF), with NLEB points per sphere and PRUNE_LEVEL
+    pruning; ``parameters`` go to DROPParameters and override both."""
+    parameters.setdefault("nleb", NLEB)
     parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
     return DROP(lsf=getattr(mp, DROP_LSF[name])(), parameters=DROPParameters(**parameters))
 
 
 def svdw_drop(**parameters: Any) -> Any:
-    """The SvdW-DROP cavity with PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
+    """The SvdW-DROP cavity at NLEB with PRUNE_LEVEL pruning; ``parameters`` go to
+    DROPParameters."""
     return drop_cavity("SvdW-DROP", **parameters)
 
 
 def rho_drop(**parameters: Any) -> Any:
-    """The isodensity cavity (rho-DROP, MOIST's defaults: rho_iso 1e-3 e/bohr^3), pruned.
+    """The isodensity cavity (rho-DROP, rho_iso 1e-3 e/bohr^3 as MOIST's default) at NLEB, pruned.
 
     The surface follows the density, so it is rebuilt every SCF iteration, and every
     iteration also needs what a fixed surface needs only in the gradient: the derivatives of

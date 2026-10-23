@@ -30,6 +30,7 @@ from tautomator.config import (
     DEFAULT_MEMORY_GB,
     DROP_COMPONENTS,
     DROP_LSF,
+    DROP_NLEB,
     DROP_PRUNE_LEVEL,
     PCM_METHODS,
     PCM_STORE_FRACTION,
@@ -185,7 +186,7 @@ def _pcm_block(
     SCF iterations; _solvation sizes it.
 
     A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
-    with the cavity and pruning pyscf_runner gives MOIST.  pcm_hydrogen_radius is refused
+    with the cavity, grid and pruning pyscf_runner gives MOIST.  pcm_hydrogen_radius is refused
     there, as pyscf_runner refuses it: MOIST has radii of its own.
     """
     eps = solvent_dielectric(solvent)
@@ -206,7 +207,8 @@ def _pcm_block(
         moist_settings = (
             "psi4_swig_pcm.enable(MoistSettings(\n"
             f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
-            f"parameters=moist.DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
+            f"parameters=moist.DROPParameters(nleb={DROP_NLEB}, "
+            f"wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
             f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
             f"    incore_mb={incore_mb},\n"
             "))\n"

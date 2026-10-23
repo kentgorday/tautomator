@@ -163,7 +163,9 @@ score. All three drivers implement the same three operations (`single_point`,
 `scoring.py` are backend-agnostic.
 
 - **`"pyscf"` (default).** In-process Python library. Supports analytical PCM
-  gradients (IEF-PCM, the default; C-PCM, COSMO) and SMD. Of the 3c composites
+  gradients (IEF-PCM, C-PCM, COSMO) on PySCF's own switching/Gaussian cavity
+  and on MOIST's DROP cavities (below; IEF-PCM on SvdW-DROP is the default
+  solvent model on both drivers), and SMD. Of the 3c composites
   it implements only wB97X-3c. The PCM models run through FastPCM
   (`tautomator/pyscf_fast_pcm.py`): PySCF's own PCM, cavity and results, with
   the per-geometry work kept between SCF iterations. A wB97X-3c/vDZP energy and
@@ -189,13 +191,16 @@ score. All three drivers implement the same three operations (`single_point`,
   available; on Linux it can, so the limit there is lower.
 
   The same PCM models also run on MOIST's DROP cavities
-  (`tautomator/pyscf_moist.py`), in the experimental `moist` environment
-  (`pixi install -e moist`, then `pixi run -e moist ...`): `solvent_model =
+  (`tautomator/pyscf_moist.py`; MOIST is in the default environment): `solvent_model =
   "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and cavity `SvdW-DROP`
   (a smooth solvent-excluded-like surface over MOIST's CPCM radii) or
   `rho-DROP` (the electron isodensity surface, rho_iso = 1e-3 e/bohr³, which
-  follows the density through the SCF), e.g. `"IEFPCM/SvdW-DROP"`. The psi4
-  driver runs them too (see below). Water at wB97X-3c/vDZP: −6.9 and −7.2
+  follows the density through the SCF), e.g. `"IEFPCM/SvdW-DROP"`, the default
+  solvent model. Both drivers build them with 434 Lebedev points per sphere and
+  MOIST's pruning level 4 (`config.DROP_NLEB`, `DROP_PRUNE_LEVEL`): MOIST's own
+  default, 194, left the PCM energy of small anions up to 0.28 kcal/mol off,
+  434 keeps 42 test solutes within 0.1 kcal/mol (docs/nonelectrostatic.md, "On
+  MOIST's DROP cavities"). The psi4 driver runs them too (see below). Water at wB97X-3c/vDZP: −6.9 and −7.2
   kcal/mol, against −6.5 on PySCF's cavity. Both have analytical gradients, so
   refinement minimizes in them, and both take vDZP's ECPs, which MOIST's own
   PySCF code refuses. On PySCF they have no Hessian (`rrho = "refinement"` with
@@ -243,10 +248,9 @@ score. All three drivers implement the same three operations (`single_point`,
   6 GB as at 12 (that one measured on Accelerate's BLAS).
 
   The DROP solvent models (`"<model>/<cavity>"`, as for PySCF above) run
-  through psi4-swig-pcm's MOIST host, with the same cavities and pruning as
-  on PySCF. The `psi4` environment has MOIST for them, which is why its first
-  install compiles MOIST (see "Non-obvious design decisions"); tautomator itself
-  needs no MOIST then: run from the default environment. A run on a DROP model
+  through psi4-swig-pcm's MOIST host, with the same cavities, grid and pruning
+  as on PySCF. The `psi4` environment has MOIST for them, as the default
+  environment does (see "Non-obvious design decisions"). A run on a DROP model
   first checks that its Psi4 can import MOIST (a `psi4` environment installed
   before it had MOIST cannot), so a missing one stops the run instead of
   failing every conformer. Psi4 takes its frequencies as finite differences of
@@ -298,16 +302,15 @@ its own charge. It is for reference data that fix the species, such as MNSol,
 where adding forms the measurement did not see would change the answer; it
 needs `approach = "rdkit_first"`.
 
-`[scoring] nonelectrostatic_descriptors = true` also saves each solvated
-conformer's nonelectrostatic descriptors, with its energies, to
-`<output_dir>/nonelectrostatic.npz`, for fitting the correction (PySCF and an
-analytical PCM model; see [docs/nonelectrostatic.md](docs/nonelectrostatic.md)).
+The nonelectrostatic descriptors for fitting the correction are not a config
+setting: `scripts/run_mnsol_set.py` asks `run_pipeline` for them (its
+`descriptors` argument; see [docs/nonelectrostatic.md](docs/nonelectrostatic.md)).
 
 | | `high_quality` | `fast` |
 |---|---|---|
 | sampling `ewin` | 10 | 15 |
 | refinement | wB97X-3c/vDZP | OrbMol-v2 |
-| refinement solvation | minimized in IEF-PCM | wB97X-3c/vDZP single point |
+| refinement solvation | minimized in IEF-PCM/SvdW-DROP | wB97X-3c/vDZP single point |
 | refinement `ewin` | 8 | 6 |
 | scoring | wB97M-V/def2-QZVPPD | wB97M-V/def2-TZVPPD |
 | cost (40-molecule pKa set) | ~74 d | ~15–21 d |
@@ -379,8 +382,7 @@ built from source with a backend older pixi cannot run.
 
 ```bash
 pixi install            # the default environment: everything but Psi4
-pixi install -e psi4    # only for compute.driver = "psi4" (compiles MOIST, for the DROP models)
-pixi install -e moist   # experimental: default + MOIST's DROP cavities (compiles MOIST)
+pixi install -e psi4    # only for compute.driver = "psi4" (it has MOIST too)
 pixi run python scripts/run_pipeline.py examples/glycine_pyscf.toml
 ```
 
@@ -481,13 +483,14 @@ The set of things that look weird and aren't. Read before "fixing":
   conformer in turn. Keep it that way round: don't `import psi4` in tautomator.
   Besides the ABI conflict, running Psi4 as a separate program is what keeps
   tautomator's license independent of Psi4's LGPL-3.0.
-- **MOIST comes from psi4-swig-pcm's repository**, in an experimental `moist`
-  environment: the default environment plus MOIST, in the same solve group, so
-  both have the same versions. There is no Psi4 in it: MOIST has no conda-forge
-  or PyPI package, and the rattler-build recipe that builds it lives in
-  psi4-swig-pcm (`packages/moist`), so that both repositories build MOIST from
-  one recipe. `pixi.lock` pins the commit, as for `psi4-swig-pcm` itself, and
-  `pixi update moist` moves it. Change the recipe there, not here; its README
+- **MOIST comes from psi4-swig-pcm's repository**, in the default environment
+  (the `moist` feature; the default solvent model needs it). No Psi4 comes with
+  it: MOIST has no conda-forge or PyPI package, and the rattler-build recipe
+  that builds it lives in psi4-swig-pcm (`packages/moist`), so that both
+  repositories build MOIST from one recipe. `pixi.toml` pins the commit (`rev`,
+  the same as `psi4-swig-pcm`'s), which has the recipe's patch 0002: the
+  surface contractions the nonelectrostatic correction's gradients need on
+  DROP cavities. Change the recipe there, not here; its README
   ("The moist package") lists what it must keep for tautomator: the same
   Python; BLAS/LAPACK from the environment (MKL on linux-64, OpenBLAS on
   osx-arm64), by building against the netlib variants of `libblas`/`liblapack`;
@@ -500,9 +503,8 @@ The set of things that look weird and aren't. Read before "fixing":
   installs that could have drifted apart, and a separate one would isolate
   nothing (it would have to share the `psi4` environment's solve group, so
   MOIST's dependencies would constrain that one anyway). The price is that
-  the first `pixi install -e psi4` compiles MOIST, as the first `pixi install
-  -e moist` does (about 9 minutes on 4 cores): once for both, as the two get
-  the same build.
+  the first `pixi install` (and `pixi install -e psi4`) compiles MOIST (about
+  9 minutes on 4 cores).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2
@@ -643,9 +645,9 @@ kinds of work:
   and NEB paths between neighbouring conformers (all rescored with DFT), RESP2
   charges with virtual sites, and valence fitting with smee/descent.
 
-Both rest on **one solvation model on every engine**: the same smooth
-switching/Gaussian cavity (ISWIG switching, `config.PCM_SWITCHING`) and IEF-PCM
-in PySCF and in Psi4 (through
+Both rest on **one solvation model on every engine**: IEF-PCM on MOIST's
+smooth SvdW-DROP cavity by default (or PySCF's switching/Gaussian cavity, ISWIG
+switching), in PySCF and in Psi4 (through
 [psi4-swig-pcm](https://github.com/kentgorday/psi4-swig-pcm), LGPL-3,
 installed only in the `psi4` environment).
 

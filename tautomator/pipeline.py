@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from tautomator.config import PkaConfig
@@ -13,10 +14,9 @@ from tautomator.ensemble import (
     schema_version,
     serialize_ensemble,
 )
-from tautomator.nonelectrostatic import DESCRIPTOR_FILE
 from tautomator.refinement import refine
 from tautomator.sampling import run_approach1, run_approach2
-from tautomator.scoring import score
+from tautomator.scoring import check_descriptor_models, score
 from tautomator.types import Ensemble
 
 log = logging.getLogger(__name__)
@@ -65,7 +65,9 @@ def _find_resume_point(output_dir: Path, smiles: str) -> tuple[Ensemble, str] | 
     return None
 
 
-def run_pipeline(config: PkaConfig, resume: bool = False) -> Ensemble:
+def run_pipeline(
+    config: PkaConfig, resume: bool = False, *, descriptors: Sequence[str] | None = None
+) -> Ensemble:
     """Run the full three-stage pKa prediction pipeline.
 
     Stage 1 (Sampling): CREST-based conformer/tautomer/protonation enumeration,
@@ -83,9 +85,20 @@ def run_pipeline(config: PkaConfig, resume: bool = False) -> Ensemble:
     granularity: a stage interrupted partway through restarts from its
     beginning, since neither refine() nor score() checkpoints per conformer.
 
+    descriptors (not part of the config: for fitting the nonelectrostatic
+    correction, scripts/run_mnsol_set.py): save every scored conformer's
+    nonelectrostatic descriptors with its energies, on the run's own solvent model
+    and on each further model listed (one more solvated single point per conformer
+    and model); `scoring.score` says where.  None saves none.
+
     Returns Ensemble with Boltzmann weights assigned.
     """
     output_dir = Path(config.compute.output_dir)
+    if descriptors is not None:
+        # before any stage runs, not after days of sampling and refinement
+        if config.compute.driver != "pyscf":
+            raise ValueError("The nonelectrostatic descriptors need [compute] driver = 'pyscf'")
+        check_descriptor_models(config.scoring.solvent_model, descriptors)
 
     # One solvent for the whole run: xTB's ALPB during sampling and xtb-level
     # RRHO, and the implicit-solvent model at refinement and scoring.  A run
@@ -180,7 +193,8 @@ def run_pipeline(config: PkaConfig, resume: bool = False) -> Ensemble:
         pcm_hydrogen_radius=sc.pcm_hydrogen_radius,
         threads=threads,
         memory_gb=memory_gb,
-        descriptors_path=output_dir / DESCRIPTOR_FILE if sc.nonelectrostatic_descriptors else None,
+        descriptors_dir=output_dir if descriptors is not None else None,
+        descriptor_models=tuple(descriptors or ()),
     )
     ensemble.settings["scoring"] = provenance["scoring"]
 

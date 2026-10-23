@@ -3,7 +3,7 @@
 Each host routine MoistHost replaces is compared with MOIST's at the same input, then whole
 SCF and gradient runs with MOIST's PCM models.  Molecules with ECPs, which MOIST's own host
 refuses, are checked against PySCF's PCM on MOIST's surface and against finite differences.
-Runs only where MOIST is installed (the moist pixi environment); to check another MOIST
+Runs only where MOIST is installed (the default pixi environment); to check another MOIST
 release, run it there with that release and see the module docstring for CHECKED.  A MOIST
 that is installed but does not import fails here rather than skipping.  The checks of the
 MOIST build itself (BLAS/LAPACK from the environment) live with its recipe, in
@@ -22,7 +22,7 @@ import pytest
 # shared library it was linked against is missing) fails.  pytest 9's importorskip does the
 # same, but earlier pytest skipped it.
 if importlib.util.find_spec("moist") is None:
-    pytest.skip("MOIST is installed only in the moist pixi environment", allow_module_level=True)
+    pytest.skip("MOIST is not installed in this environment", allow_module_level=True)
 
 import moist
 import moist.pyscf as mp
