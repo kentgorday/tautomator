@@ -102,7 +102,7 @@ class TestDescriptorCapture:
     ) -> None:
         from tautomator import psi4_runner
 
-        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda **_: "psi4")
+        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: "psi4")
         with pytest.raises(ValueError, match="solvated PySCF"):
             score(
                 _ensemble(),

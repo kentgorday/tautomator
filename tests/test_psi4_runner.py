@@ -114,21 +114,26 @@ class TestMoistBlock:
         block = _pcm_block("IEFPCM/SvdW-DROP", "water")
         assert f"DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})" in block
 
-    def test_is_python_and_moists_own_radii(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3)
+    def test_is_python_on_moists_own_radii(self) -> None:
+        block = _pcm_block("IEFPCM/SvdW-DROP", "water")
         compile(block, "<moist block>", "exec")
         assert "psi4_swig_pcm.enable(MoistSettings(" in block
         assert "modified_bondi_radii" not in block and "PCMSettings" not in block
+
+    def test_hydrogen_radius_raises(self) -> None:
+        # as on pyscf_runner: MOIST's cavity has radii of its own
+        with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
+            _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3)
 
     def test_unknown_cavity_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):
             _pcm_block("IEFPCM/sphere-DROP", "water")
 
-    def test_jobs_on_it_run_the_psi4_with_moist(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs: list[tuple[str, bool]] = []
+    def test_enabled_before_every_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        inputs: list[str] = []
 
         def fake_run(input_text: str, work_dir: Path, **kwargs: object) -> str:
-            runs.append((input_text, bool(kwargs.get("moist"))))
+            inputs.append(input_text)
             (work_dir / "optimized.xyz").write_text("3\n\nO 0 0 0\nH 0 0 1\nH 0 1 0\n")
             (work_dir / "frequencies.dat").write_text("")
             return "=== FINAL ENERGY: -1.000000000000 ===\n=== CONVERGED: 1 ===\n"
@@ -138,12 +143,7 @@ class TestMoistBlock:
         psi4_runner.single_point(_water(), 0, *solvated)
         psi4_runner.optimize(_water(), 0, *solvated)
         psi4_runner.frequencies(_water(), 0, *solvated)
-        psi4_runner.single_point(_water(), 0, "PBE0", "def2-SVP", "IEFPCM", "water")
-        psi4_runner.single_point(_water(), 0, "PBE0", "def2-SVP")
-        assert [moist for _, moist in runs] == [True, True, True, False, False]
-        for text, job in zip(
-            [text for text, _ in runs[:3]], ("energy(", "optimize(", "frequency("), strict=True
-        ):
+        for text, job in zip(inputs, ("energy(", "optimize(", "frequency("), strict=True):
             assert text.index("MoistSettings(") < text.index(job)
 
 
@@ -306,7 +306,7 @@ class TestMemoryFlag:
     def test_memory_flag_present(
         self, isolated_tmpdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda **_: tmp_path / "psi4")
+        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: tmp_path / "psi4")
         self._recording_psi4(tmp_path)
         with _scratch_dir() as tmp:
             _run_psi4("E = energy('scf')", Path(tmp), memory_gb=12.0)
@@ -319,7 +319,7 @@ class TestMemoryFlag:
         self, isolated_tmpdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Psi4 must never silently fall back to its own 500 MiB default.
-        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda **_: tmp_path / "psi4")
+        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: tmp_path / "psi4")
         self._recording_psi4(tmp_path)
         with _scratch_dir() as tmp:
             _run_psi4("E = energy('scf')", Path(tmp))
@@ -329,7 +329,7 @@ class TestMemoryFlag:
         self, isolated_tmpdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # -s keeps psi4's binary scratch inside the dir we delete
-        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda **_: tmp_path / "psi4")
+        monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: tmp_path / "psi4")
         self._recording_psi4(tmp_path)
         with _scratch_dir() as tmp:
             _run_psi4("E = energy('scf')", Path(tmp))
@@ -380,38 +380,40 @@ class TestPsi4Executable:
         with pytest.raises(FileNotFoundError):
             scoring._get_driver("psi4")
 
-    def test_a_moist_job_takes_the_psi4_moist_environment(
-        self, envs: Path, tmp_path: Path
+    def test_a_drop_model_needs_a_psi4_that_imports_moist(
+        self, envs: Path, isolated_tmpdir: Path
     ) -> None:
-        self._psi4_in(envs / "psi4")
-        with_moist = self._psi4_in(envs / "psi4-moist")
-        assert psi4_executable(moist=True) == with_moist
-        assert psi4_executable() == envs / "psi4" / "bin" / "psi4"
+        # a psi4 environment installed before it had MOIST, or a psi4 on PATH without it
+        # (Psi4 writes the traceback to its output file, the third argument)
+        self._psi4_in(
+            envs / "psi4", 'echo "ModuleNotFoundError: No module named \'moist\'" > "$3"\nexit 1'
+        )
+        psi4_runner.check_installed()  # no DROP model: Psi4 is not launched
+        with pytest.raises(
+            ImportError, match=r"\(ModuleNotFoundError: No module named 'moist'\).*-e psi4"
+        ):
+            psi4_runner.check_installed(drop=True)
+        with pytest.raises(ImportError, match="pixi install -e psi4"):
+            refinement._get_driver("psi4", drop=True)
+        with pytest.raises(ImportError, match="pixi install -e psi4"):
+            scoring._get_driver("psi4", drop=True)
 
-    def test_psi4_moist_stands_in_for_a_missing_psi4(self, envs: Path) -> None:
-        # the same Psi4 (one solve group), so it can run the other jobs too
-        with_moist = self._psi4_in(envs / "psi4-moist")
-        assert psi4_executable() == with_moist
-
-    def test_a_moist_job_never_takes_the_psi4_environment(self, envs: Path) -> None:
-        # its Psi4 has no MOIST to import
-        self._psi4_in(envs / "psi4")
-        with pytest.raises(FileNotFoundError, match="pixi install -e psi4-moist"):
-            psi4_executable(moist=True)
-        with pytest.raises(FileNotFoundError, match="psi4-moist"):
-            refinement._get_driver("psi4", moist=True)
-        with pytest.raises(FileNotFoundError, match="psi4-moist"):
-            scoring._get_driver("psi4", moist=True)
-
-    def test_stages_on_a_drop_model_ask_for_the_psi4_with_moist(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_the_moist_check_imports_what_a_drop_job_does(
+        self, envs: Path, tmp_path: Path, isolated_tmpdir: Path
     ) -> None:
+        self._psi4_in(envs / "psi4", f'/bin/cp "$1" {tmp_path}/checked.dat')
+        psi4_runner.check_installed(drop=True)
+        checked = (tmp_path / "checked.dat").read_text()
+        assert "import moist\n" in checked
+        assert checked in _pcm_block("IEFPCM/SvdW-DROP", "water")
+
+    def test_stages_on_a_drop_model_check_for_moist(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tautomator.config import RefinementConfig, Solvation
         from tautomator.types import Ensemble
 
-        asked: list[bool] = []
+        checked: list[bool] = []
         monkeypatch.setattr(
-            psi4_runner, "psi4_executable", lambda moist=False: asked.append(moist)
+            psi4_runner, "check_installed", lambda drop=False: checked.append(drop)
         )
         drop, pcm = "IEFPCM/SvdW-DROP", "IEFPCM"
         runs: list[tuple[str, Solvation]] = [(drop, "optimize"), (drop, "none"), (pcm, "optimize")]
@@ -422,8 +424,9 @@ class TestPsi4Executable:
             refinement.refine(Ensemble("O"), config, driver="psi4", solvent_model=model)
         scoring.score(Ensemble("O"), "psi4", "PBE0", "def2-SVP", drop, "water")
         scoring.score(Ensemble("O"), "psi4", "PBE0", "def2-SVP")
-        # refine() asks twice (the optimizer and the solvation single point)
-        assert asked == [True, True, False, False, False, False, True, False]
+        # Once per stage, for the Psi4 that both optimizes and adds solvation; a gas-phase
+        # refinement checks too, for the scoring that will need MOIST.
+        assert checked == [True, True, False, True, False]
 
     def test_psi4_runs_with_its_own_bin_first_on_path(
         self, envs: Path, tmp_path: Path, isolated_tmpdir: Path
@@ -454,7 +457,7 @@ def test_run_psi4_passes_on_a_gauss_law_warning(
         stdout = ""
         stderr = "PCM nuclear surface charge violates Gauss's law by 1.20e-02 (...)\n"
 
-    monkeypatch.setattr(psi4_runner, "psi4_executable", lambda **_: tmp_path / "psi4")
+    monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: tmp_path / "psi4")
     monkeypatch.setattr("tautomator.psi4_runner.subprocess.run", lambda *a, **k: _Result())
     (tmp_path / "output.dat").write_text("=== FINAL ENERGY: -1.0 ===")
     with caplog.at_level(logging.WARNING):
@@ -509,43 +512,51 @@ def test_optimizes_and_takes_frequencies_in_solvent(isolated_tmpdir: Path) -> No
     assert all(f > 1000.0 for f in freqs)
 
 
-def _require_psi4_moist() -> None:
-    try:
-        exe = psi4_executable(moist=True)
-    except FileNotFoundError:
-        pytest.skip("no psi4-moist environment (pixi install -e psi4-moist)")
-    if exe.parent.parent.name != "psi4-moist":
-        pytest.skip("no psi4-moist environment (pixi install -e psi4-moist)")
+def _require_psi4_with_moist() -> None:
+    """Skip without Psi4.  Its environment has MOIST: one that does not fails here."""
+    _require_psi4()
+    psi4_runner.check_installed(drop=True)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "CPCM/rho-DROP"])
-def test_drop_solvation_energy_matches_pyscf(isolated_tmpdir: Path, model: str) -> None:
+@pytest.mark.parametrize(
+    ("model", "basis", "tolerance"),
+    [
+        # measured < 5e-9 kcal/mol
+        ("IEFPCM/SvdW-DROP", "def2-SVP", 1e-6),
+        ("CPCM/rho-DROP", "def2-SVP", 1e-6),
+        # vDZP's ECPs: the two codes' ECP integrals put the gas-phase energies 2e-4 kcal/mol
+        # apart, the solvation energies 3e-6 (the ECP-reduced charges and rho-DROP's core fill)
+        ("IEFPCM/rho-DROP", "vDZP", 2e-5),
+    ],
+)
+def test_drop_solvation_energy_matches_pyscf(
+    isolated_tmpdir: Path, model: str, basis: str, tolerance: float
+) -> None:
     """psi4-swig-pcm's MOIST host and pyscf_moist solve the same model on the same cavity.
 
-    Runs in the moist environment (PySCF's side imports MOIST in process), with psi4-moist
-    installed beside it.
+    Runs in the moist environment (PySCF's side imports MOIST in process), with the psi4
+    environment beside it.
     """
-    _require_psi4_moist()
+    _require_psi4_with_moist()
     pytest.importorskip("moist")
     from tautomator import pyscf_runner
 
-    level = ("HF", "def2-SVP")  # no DFT grid, which the two drivers build differently
+    level = ("HF", basis)  # no DFT grid, which the two drivers build differently
     solvation = {}
     for name, driver in (("psi4", psi4_runner), ("pyscf", pyscf_runner)):
         e_pcm = driver.single_point(_formate(), -1, *level, model, "water", threads=4)
         e_gas = driver.single_point(_formate(), -1, *level, threads=4)
         solvation[name] = (e_pcm - e_gas) * 627.509474
     assert solvation["psi4"] < -60.0  # an anion in water
-    # measured < 5e-9 kcal/mol on SvdW-DROP and rho-DROP
-    assert abs(solvation["psi4"] - solvation["pyscf"]) < 1e-6, solvation
+    assert abs(solvation["psi4"] - solvation["pyscf"]) < tolerance, solvation
 
 
 @pytest.mark.slow
 def test_optimizes_and_takes_frequencies_on_a_drop_cavity(isolated_tmpdir: Path) -> None:
     """MOIST's analytical gradients: optking minimizes on SvdW-DROP, and the frequencies
     (finite differences of those gradients; PySCF has none on MOIST) are real."""
-    _require_psi4_moist()
+    _require_psi4_with_moist()
     solvated = ("HF", "def2-SVP", "IEFPCM/SvdW-DROP", "water")
     start = psi4_runner.single_point(_water(), 0, *solvated, threads=4)
     geom, energy, converged = psi4_runner.optimize(_water(), 0, *solvated, threads=4)

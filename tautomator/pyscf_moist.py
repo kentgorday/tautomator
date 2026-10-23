@@ -72,13 +72,13 @@ from moist import DROPParameters, Structure
 from moist.configuration import CavityConfiguration
 from moist.context import _resolve_context
 from moist.interface import PotentialAdjointResponse, SolvationModel, SolvationModelComponent
-from moist.pyscf import DROP, Isodensity, SvdW
+from moist.pyscf import DROP
 from numpy.typing import NDArray
 from pyscf import df, gto, lib
 from pyscf.lib import logger
 from scipy.special import erf
 
-from tautomator.config import DROP_PRUNE_LEVEL
+from tautomator.config import DROP_LSF, DROP_PRUNE_LEVEL
 from tautomator.pyscf_fast_pcm import fingerprint
 
 Array = NDArray[np.float64]
@@ -95,10 +95,16 @@ PRUNE_LEVEL = DROP_PRUNE_LEVEL
 BLOCK_BYTES = 16e6
 
 
+def drop_cavity(name: str, **parameters: Any) -> Any:
+    """A DROP cavity by name (config.DROP_LSF), with PRUNE_LEVEL pruning; ``parameters`` go
+    to DROPParameters."""
+    parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
+    return DROP(lsf=getattr(mp, DROP_LSF[name])(), parameters=DROPParameters(**parameters))
+
+
 def svdw_drop(**parameters: Any) -> Any:
     """The SvdW-DROP cavity with PRUNE_LEVEL pruning; ``parameters`` go to DROPParameters."""
-    parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
-    return DROP(lsf=SvdW(), parameters=DROPParameters(**parameters))
+    return drop_cavity("SvdW-DROP", **parameters)
 
 
 def rho_drop(**parameters: Any) -> Any:
@@ -110,8 +116,7 @@ def rho_drop(**parameters: Any) -> Any:
     of the surface's own response to the density.  Those, not (k|mn), are what a rho-DROP SCF
     costs; see the README for how much.
     """
-    parameters.setdefault("wleb_prune_level", PRUNE_LEVEL)
-    return DROP(lsf=Isodensity(), parameters=DROPParameters(**parameters))
+    return drop_cavity("rho-DROP", **parameters)
 
 
 def _replaced() -> dict[str, Callable[..., Any]]:

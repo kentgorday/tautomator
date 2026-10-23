@@ -25,6 +25,7 @@ from tautomator.config import (
     AUX_DIFFUSE_S,
     AUXBASIS,
     DEFAULT_MEMORY_GB,
+    DROP_COMPONENTS,
     PCM_METHODS,
     PCM_SWITCHING,
     drop_solvent_model,
@@ -579,22 +580,17 @@ def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int
     density-fitted mean field without MoistHost.
     """
     try:
-        from moist import Context, ModelComponentCOSMO, ModelComponentCPCM, ModelComponentIEFPCM
+        import moist
 
-        from tautomator.pyscf_moist import attach, rho_drop, svdw_drop
+        from tautomator.pyscf_moist import attach, drop_cavity
     except ImportError as err:
         raise ImportError(
             f"the {cavity} cavity needs MOIST, installed only in the moist pixi "
             "environment (pixi install -e moist)"
         ) from err
-    component = {
-        "IEF-PCM": ModelComponentIEFPCM,
-        "C-PCM": ModelComponentCPCM,
-        "COSMO": ModelComponentCOSMO,
-    }[pcm_method](eps)
-    surface = {"SvdW-DROP": svdw_drop, "rho-DROP": rho_drop}[cavity]()
-    context = Context(nthreads=threads, verbosity=0)
-    return attach(mf, cavity=surface, components=[component], context=context)
+    component = getattr(moist, DROP_COMPONENTS[pcm_method])(eps)
+    context = moist.Context(nthreads=threads, verbosity=0)
+    return attach(mf, cavity=drop_cavity(cavity), components=[component], context=context)
 
 
 def _run_scf_robust(mf: Any) -> float:
@@ -791,7 +787,7 @@ def frequencies(
     """
     if geom.n_atoms == 1:
         return []
-    if solvent_model is not None and drop_solvent_model(solvent_model) is not None:
+    if drop_solvent_model(solvent_model) is not None:
         raise NotImplementedError(
             f"no Hessian in solvent_model = {solvent_model!r}: MOIST's PCM has none"
         )

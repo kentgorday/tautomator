@@ -147,14 +147,23 @@ PCM_METHODS: dict[str, str] = {
 # MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
 # e/bohr^3), which follows the density through the SCF.  On the pyscf driver
 # (tautomator.pyscf_moist) they need the moist pixi environment; on the psi4 driver
-# (psi4-swig-pcm's MOIST host) the psi4-moist one, which psi4_runner launches Psi4
-# from.  Normalized name (upper case, no hyphens) -> MOIST's name.
+# (psi4-swig-pcm's MOIST host) the psi4 environment, which has MOIST.  Normalized name
+# (upper case, no hyphens) -> MOIST's name.
 DROP_CAVITIES: dict[str, str] = {
     "SVDWDROP": "SvdW-DROP",
     "RHODROP": "rho-DROP",
     "ISODENSITYDROP": "rho-DROP",
 }
 
+# The MOIST classes both drivers build a DROP model from: each cavity's level-set function
+# (moist.DROP(lsf=moist.SvdW(), ...)) and each PCM method's component
+# (moist.ModelComponentIEFPCM(eps)).  Every name in DROP_CAVITIES and PCM_METHODS has one.
+DROP_LSF: dict[str, str] = {"SvdW-DROP": "SvdW", "rho-DROP": "Isodensity"}
+DROP_COMPONENTS: dict[str, str] = {
+    "IEF-PCM": "ModelComponentIEFPCM",
+    "C-PCM": "ModelComponentCPCM",
+    "COSMO": "ModelComponentCOSMO",
+}
 
 #: MOIST's smooth pruning of near-zero quadrature weights (DROPParameters.wleb_prune_level),
 #: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  On acetaminophen it drops 14%
@@ -163,8 +172,10 @@ DROP_CAVITIES: dict[str, str] = {
 DROP_PRUNE_LEVEL = 4
 
 
-def drop_solvent_model(model: str) -> tuple[str, str] | None:
+def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
     """(PCM method, MOIST cavity name) of a "<model>/<cavity>" solvent model, else None."""
+    if model is None:
+        return None
     pcm, sep, cavity = model.upper().replace("-", "").partition("/")
     if sep and pcm in PCM_METHODS and cavity in DROP_CAVITIES:
         return PCM_METHODS[pcm], DROP_CAVITIES[cavity]
@@ -700,7 +711,7 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 "single point."
             )
         model = scoring.solvent_model
-        if model is not None and drop_solvent_model(model) is not None:
+        if drop_solvent_model(model) is not None:
             raise ValueError(
                 "[scoring] nonelectrostatic_descriptors are computed on PySCF's own PCM "
                 f"cavity, not yet on MOIST's DROP cavities (solvent_model = {model!r})"
@@ -739,7 +750,7 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -
 
     model = scoring.solvent_model
     # On the psi4 driver MOIST is imported by Psi4, in its own environment, which
-    # psi4_runner.psi4_executable(moist=True) checks for when the run picks its driver.
+    # psi4_runner.check_installed(drop=True) checks for when the run picks its driver.
     if driver == "pyscf" and importlib.util.find_spec("moist") is None:
         raise ValueError(
             f"[scoring] solvent_model = {model!r} needs MOIST, which is installed only in "

@@ -9,8 +9,8 @@ Implicit solvent comes from psi4-swig-pcm, installed in Psi4's own environment:
 the same switching/Gaussian PCM as pyscf_runner's, with analytical gradients, so
 Psi4 optimizes in solvent and its frequencies are finite differences of
 analytical PCM gradients.  The same holds on MOIST's DROP cavities (solvent model
-"<model>/<cavity>"), through psi4-swig-pcm's MOIST host; those jobs run the Psi4
-of the psi4-moist environment, the only one with MOIST in it.
+"<model>/<cavity>"), through psi4-swig-pcm's MOIST host; MOIST is installed in Psi4's
+environment too.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ from tautomator.config import (
     AUX_DIFFUSE_S,
     AUXBASIS,
     DEFAULT_MEMORY_GB,
+    DROP_COMPONENTS,
+    DROP_LSF,
     DROP_PRUNE_LEVEL,
     PCM_METHODS,
     PCM_SWITCHING,
@@ -144,6 +146,11 @@ def _df_basis_block(basis: str, geom: Geometry) -> str:
     )
 
 
+# What a job on a DROP solvent model imports, beyond what every PCM job does; check_installed
+# launches Psi4 on these lines alone.
+_MOIST_IMPORTS = "import moist\nfrom psi4_swig_pcm.moist_host import MoistSettings\n"
+
+
 def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.1) -> str:
     """Psi4 input lines that put psi4-swig-pcm's PCM into every SCF of the job.
 
@@ -155,9 +162,8 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
     to stderr, where _run_psi4 looks for them.
 
     A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
-    with the cavity and pruning pyscf_runner gives MOIST (pcm_hydrogen_radius does not
-    apply: MOIST has radii of its own).  Those lines import moist, so the job has to run
-    in the psi4-moist environment: see _needs_moist().
+    with the cavity and pruning pyscf_runner gives MOIST.  pcm_hydrogen_radius is refused
+    there, as pyscf_runner refuses it: MOIST has radii of its own.
     """
     eps = solvent_dielectric(solvent)
     preamble = (
@@ -168,22 +174,20 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
     )
     drop = drop_solvent_model(solvent_model)
     if drop is not None:
+        if pcm_hydrogen_radius != 1.1:
+            raise ValueError(
+                f"pcm_hydrogen_radius = {pcm_hydrogen_radius} applies to the switching/Gaussian "
+                f"PCM cavity, not to {solvent_model!r} (MOIST's radii)"
+            )
         pcm_method, cavity = drop
-        component = {
-            "IEF-PCM": "ModelComponentIEFPCM",
-            "C-PCM": "ModelComponentCPCM",
-            "COSMO": "ModelComponentCOSMO",
-        }[pcm_method]
-        lsf = {"SvdW-DROP": "SvdW", "rho-DROP": "Isodensity"}[cavity]
-        return preamble + (
-            "import moist\n"
-            "from psi4_swig_pcm.moist_host import MoistSettings\n"
+        moist_settings = (
             "psi4_swig_pcm.enable(MoistSettings(\n"
-            f"    cavity=moist.DROP(lsf=moist.{lsf}(), "
+            f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
             f"parameters=moist.DROPParameters(wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
-            f"    components=(moist.{component}({eps!r}),),\n"
+            f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
             "))\n"
         )
+        return preamble + _MOIST_IMPORTS + moist_settings
     key = solvent_model.upper().replace("-", "")
     if key not in PCM_METHODS:
         raise ValueError(
@@ -198,15 +202,6 @@ def _pcm_block(solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.
     return preamble + (
         "from psi4_swig_pcm.cavity import modified_bondi_radii\n"
         f"psi4_swig_pcm.enable(psi4_swig_pcm.PCMSettings({settings}))\n"
-    )
-
-
-def _needs_moist(solvent_model: str | None, solvent: str | None) -> bool:
-    """Whether the job's PCM is on a MOIST cavity, so it needs the psi4-moist environment."""
-    return (
-        solvent_model is not None
-        and solvent is not None
-        and drop_solvent_model(solvent_model) is not None
     )
 
 
@@ -248,13 +243,7 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 """
 
     with _scratch_dir() as tmp:
-        output = _run_psi4(
-            input_text,
-            Path(tmp),
-            threads=threads,
-            memory_gb=memory_gb,
-            moist=_needs_moist(solvent_model, solvent),
-        )
+        output = _run_psi4(input_text, Path(tmp), threads=threads, memory_gb=memory_gb)
         return _parse_final_energy(output)
 
 
@@ -345,13 +334,7 @@ wfn.molecule().save_xyz_file('optimized.xyz', True)
 
     with _scratch_dir() as tmp:
         work_dir = Path(tmp)
-        output = _run_psi4(
-            input_text,
-            work_dir,
-            threads=threads,
-            memory_gb=memory_gb,
-            moist=_needs_moist(solvent_model, solvent),
-        )
+        output = _run_psi4(input_text, work_dir, threads=threads, memory_gb=memory_gb)
         energy = _parse_final_energy(output)
         converged = _parse_converged_flag(output)
         opt_geom = read_xyz(work_dir / "optimized.xyz")
@@ -408,13 +391,7 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 
     with _scratch_dir() as tmp:
         work_dir = Path(tmp)
-        _run_psi4(
-            input_text,
-            work_dir,
-            threads=threads,
-            memory_gb=memory_gb,
-            moist=_needs_moist(solvent_model, solvent),
-        )
+        _run_psi4(input_text, work_dir, threads=threads, memory_gb=memory_gb)
         freq_text = (work_dir / "frequencies.dat").read_text()
 
     freq_list: list[float] = []
@@ -431,7 +408,7 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 # ---------------------------------------------------------------------------
 
 
-def psi4_executable(moist: bool = False) -> Path:
+def psi4_executable() -> Path:
     """The psi4 to launch: this project's psi4 environment, else one on PATH.
 
     Psi4 is a separate program with a pixi environment of its own, installed
@@ -439,30 +416,46 @@ def psi4_executable(moist: bool = False) -> Path:
     .pixi/envs/default).  That one comes first because it is the locked one; a
     psi4 on PATH is the fallback for installs that provide it some other way.
 
-    moist: the job is on a MOIST cavity (a DROP solvent model), which only the
-    psi4-moist environment can run (its Psi4 is the psi4 environment's, plus
-    MOIST).  Without it, psi4-moist stands in for a missing psi4 environment.
-
-    Raises if there is neither.  refine() and score() call this when they pick
-    the driver, so a missing Psi4 stops the run there instead of being recorded
-    as every conformer's own failure.
+    Raises if there is neither.  refine() and score() call this (through
+    check_installed) when they pick the driver, so a missing Psi4 stops the run
+    there instead of being recorded as every conformer's own failure.
     """
-    envs = Path(sys.prefix).parent
-    names = ["psi4-moist"] if moist else ["psi4", "psi4-moist"]
-    for name in names:
-        sibling = envs / name / "bin" / "psi4"
-        if sibling.is_file():
-            return sibling
+    sibling = Path(sys.prefix).parent / "psi4" / "bin" / "psi4"
+    if sibling.is_file():
+        return sibling
     on_path = shutil.which("psi4")
     if on_path is None:
-        env = "psi4-moist" if moist else "psi4"
-        what = "No psi4 executable with MOIST" if moist else "No psi4 executable"
         raise FileNotFoundError(
-            f"{what}: install its environment with `pixi install -e {env}`"
-            + (" (it compiles MOIST)" if moist else "")
-            + ", or put psi4 on PATH."
+            "No psi4 executable: install its environment with `pixi install -e psi4`, "
+            "or put psi4 on PATH."
         )
     return Path(on_path)
+
+
+def check_installed(drop: bool = False) -> None:
+    """Raise unless there is a Psi4 to launch, and with drop, one that can import MOIST.
+
+    drop: the run has a DROP solvent model.  Its jobs import MOIST in Psi4's own
+    interpreter, so the check launches that Psi4 once to import it (about half a
+    second).  The psi4 environment has MOIST, but one installed before it did, or a
+    psi4 on PATH, may not.  refine() and score() call this when they pick the driver,
+    so a missing Psi4 or MOIST stops the run there instead of being recorded as every
+    conformer's own failure.
+    """
+    psi4 = psi4_executable()
+    if not drop:
+        return
+    with _scratch_dir() as tmp:
+        try:
+            _run_psi4(_MOIST_IMPORTS, Path(tmp), timeout=300)
+        except RuntimeError as err:
+            errors = re.findall(r"\w+Error: .*", str(err))
+            raise ImportError(
+                f"The DROP solvent models need MOIST, which {psi4} cannot import "
+                f"({errors[-1].strip() if errors else 'see the cause above'}). Install or "
+                "update the psi4 environment, which has it: `pixi install -e psi4` (it "
+                "compiles MOIST)."
+            ) from err
 
 
 def _psi4_env(psi4: Path) -> dict[str, str]:
@@ -496,7 +489,6 @@ def _run_psi4(
     timeout: int = 86400,
     threads: int = 1,
     memory_gb: float = DEFAULT_MEMORY_GB,
-    moist: bool = False,
 ) -> str:
     """Run psi4 inside work_dir and return the output text.
 
@@ -509,14 +501,12 @@ def _run_psi4(
     memory_gb becomes ``--memory``, always passed so that Psi4 never silently
     falls back to its 500 MiB default (which starves the DFT collocation
     cache) and so a config means the same thing on both backends.
-
-    moist: the input enables a MOIST cavity, so it runs the psi4-moist environment's psi4.
     """
     input_path = work_dir / "input.dat"
     output_path = work_dir / "output.dat"
     input_path.write_text(input_text)
 
-    psi4 = psi4_executable(moist=moist)
+    psi4 = psi4_executable()
     cmd = [
         str(psi4),
         str(input_path),

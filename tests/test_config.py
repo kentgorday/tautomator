@@ -1169,7 +1169,7 @@ class TestDropSolventModels:
         moist_installed: Callable[[bool], None],
         model: str,
     ) -> None:
-        # Psi4 imports MOIST in the psi4-moist environment, not in this one
+        # Psi4 imports MOIST in the psi4 environment, not in this one
         moist_installed(False)
         config = self._load(tmp_toml, model, driver="psi4")
         assert config.scoring.solvent_model == model
@@ -1197,6 +1197,20 @@ class TestDropSolventModels:
                 driver="psi4",
                 scoring="pcm_hydrogen_radius = 1.2",
             )
+
+    def test_every_cavity_and_model_has_its_moist_classes(self) -> None:
+        # both drivers build the model from these; a name missing here would fail every job
+        from tautomator.config import DROP_CAVITIES, DROP_COMPONENTS, DROP_LSF, PCM_METHODS
+
+        assert set(DROP_LSF) == set(DROP_CAVITIES.values())
+        assert set(DROP_COMPONENTS) == set(PCM_METHODS.values())
+
+    def test_those_classes_are_moists(self) -> None:
+        from tautomator.config import DROP_COMPONENTS, DROP_LSF
+
+        moist = pytest.importorskip("moist")
+        for name in [*DROP_LSF.values(), *DROP_COMPONENTS.values()]:
+            assert isinstance(getattr(moist, name), type), name
 
     def test_unknown_cavity(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]

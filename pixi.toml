@@ -147,23 +147,19 @@ libblas = { version = "*", build = "*_newaccelerate" }
 
 # MOIST (experimental): its SvdW-DROP and isodensity (rho-DROP) cavities for the PCM
 # models, as solvent_model "<model>/<cavity>": PySCF's through tautomator.pyscf_moist (the
-# moist environment), Psi4's through psi4-swig-pcm's MOIST host (psi4-moist); the
+# moist environment), Psi4's through psi4-swig-pcm's MOIST host (the psi4 environment); the
 # nonelectrostatic correction does not use them yet.  Built from source by pixi-build,
 # from the recipe in psi4-swig-pcm's repository (packages/moist: pinned to a MOIST
 # release), which psi4-swig-pcm builds its own moist environment from too: one recipe for
 # both.  Only the recipe comes from there; no Psi4 comes with it.  The commit is pinned in
 # pixi.lock, and `pixi update moist` moves it (`pixi update psi4-swig-pcm` moves both).
-# Kept out of the default environment while it is experimental: installing it compiles
-# MOIST (about 9 minutes on 4 cores).
+# Installing it compiles MOIST (about 9 minutes on 4 cores, once: both environments get the
+# same build), which is why the default environment leaves it out while it is experimental.
 [feature.moist.dependencies]
 moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", subdirectory = "packages/moist" }
 
 [environments]
 default = { solve-group = "default" }
-psi4 = { features = ["psi4"], no-default-feature = true, solve-group = "psi4" }
+# With MOIST, so that every Psi4 job of a run, DROP solvent models included, runs one Psi4.
+psi4 = { features = ["psi4", "moist"], no-default-feature = true }
 moist = { features = ["moist"], solve-group = "default" }
-# Psi4 with MOIST, for the DROP solvent models on the psi4 driver (psi4_runner launches its
-# psi4 for those jobs, and the psi4 environment's for the rest).  In the psi4 environment's
-# solve group: a solvation energy subtracts a gas-phase energy from one environment from a
-# solvated one from the other, so both have the same Psi4.
-psi4-moist = { features = ["psi4", "moist"], no-default-feature = true, solve-group = "psi4" }
