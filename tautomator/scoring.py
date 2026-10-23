@@ -14,6 +14,7 @@ from types import ModuleType
 from tautomator.cavity_quadrature import INSIDE_GRID, OUTSIDE_GRID
 from tautomator.config import (
     DEFAULT_MEMORY_GB,
+    DROP_PRUNE_LEVEL,
     PCM_SWITCHING,
     drop_solvent_model,
     solvent_dielectric,
@@ -24,6 +25,23 @@ from tautomator.nonelectrostatic import DELTA, VV_C, ScoredConformer, save_descr
 from tautomator.types import Ensemble, ExcludedConformer
 
 log = logging.getLogger(__name__)
+
+
+def _quadrature_settings(solvent_model: str | None) -> dict[str, object]:
+    """How the descriptors' volume integrals were done: cavity grids on PySCF's cavity, the
+    surface rays and the all-space grid on a DROP cavity (with MOIST's surface settings)."""
+    drop = drop_solvent_model(solvent_model)
+    if drop is None:
+        return {"inside_grid": list(INSIDE_GRID), "outside_grid": list(OUTSIDE_GRID)}
+    from tautomator.surface_quadrature import RAY_RULE, SSF_A, VOLUME_RULE
+
+    return {
+        "cavity": drop[1],
+        "drop_prune_level": DROP_PRUNE_LEVEL,
+        "volume_rule": list(VOLUME_RULE),
+        "ray_rule": list(RAY_RULE),
+        "partition_a": SSF_A,
+    }
 
 
 def _get_driver(name: str, *, drop: bool = False) -> ModuleType:
@@ -207,8 +225,7 @@ def score(
                 "solvent_rho": solvent_electron_density(solvent),
                 "delta": DELTA,
                 "vv_c": VV_C,
-                "inside_grid": list(INSIDE_GRID),
-                "outside_grid": list(OUTSIDE_GRID),
+                **_quadrature_settings(solvent_model),
             },
         )
         log.info(f"  Saved descriptors of {len(scored)} conformer(s) to {descriptors_path}")

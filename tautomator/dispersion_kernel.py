@@ -18,8 +18,9 @@ compiled pass, parallel over points.
 needs of E = sum_p c_p J(r_p) for given point weights c: dJ/dr at each point
 (the points move with their atoms), and dE/ds_i and dE/dA_i for each element
 (the elements move with their atoms, and their areas change through the
-switching function).  The outward normals are those of a sphere's Lebedev
-directions, fixed as the atoms move.
+switching function).  On PySCF's cavity the outward normals are those of a
+sphere's Lebedev directions, fixed as the atoms move; on a DROP cavity they move
+too, and `kernel_surface_derivatives` adds dE/dn_i.
 
 Everything is in bohr.
 """
@@ -40,7 +41,8 @@ _T_SERIES = 1e-2
 
 @numba.njit(cache=True, inline="always")
 def _pair(rx: float, ry: float, rz: float, nx: float, ny: float, nz: float, d3: float) -> tuple:  # type: ignore[type-arg]
-    """k(R, n) * 3 delta^6 and grad_R k * 3 delta^6, for R = (rx, ry, rz)."""
+    """k(R, n) * 3 delta^6, grad_R k * 3 delta^6 and arctan(t)/t, for R = (rx, ry, rz)
+    (grad_n k * 3 delta^6 = R arctan(t)/t)."""
     r2 = rx * rx + ry * ry + rz * rz
     t = r2 * np.sqrt(r2) / d3
     t2 = t * t
@@ -56,7 +58,7 @@ def _pair(rx: float, ry: float, rz: float, nx: float, ny: float, nz: float, d3: 
     r_dot_n = rx * nx + ry * ny + rz * nz
     k = r_dot_n * atan_t
     s = r_dot_n * g_over_r2
-    return k, nx * atan_t + s * rx, ny * atan_t + s * ry, nz * atan_t + s * rz
+    return k, nx * atan_t + s * rx, ny * atan_t + s * ry, nz * atan_t + s * rz, atan_t
 
 
 @numba.njit(parallel=True, cache=True)
@@ -71,7 +73,7 @@ def _kernel_values(
         px, py, pz = points[p, 0], points[p, 1], points[p, 2]
         acc = 0.0
         for i in range(n_s):
-            k, _gx, _gy, _gz = _pair(
+            k, _gx, _gy, _gz, _at = _pair(
                 coords[i, 0] - px,
                 coords[i, 1] - py,
                 coords[i, 2] - pz,
@@ -94,7 +96,7 @@ def _kernel_derivatives(
     delta: float,
     weights: Array,
     n_chunks: int,
-) -> tuple[Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array, Array]:
     n_p, n_s = points.shape[0], coords.shape[0]
     d3 = delta**3
     scale = 1.0 / (3.0 * delta**6)
@@ -102,7 +104,7 @@ def _kernel_derivatives(
     dJ = np.empty((n_p, 3))
     # Element sums are accumulated per chunk of points, then added up, so that
     # no two threads write the same element.
-    acc = np.zeros((n_chunks, n_s, 4))
+    acc = np.zeros((n_chunks, n_s, 7))
     size = (n_p + n_chunks - 1) // n_chunks
     for c in numba.prange(n_chunks):
         for p in range(c * size, min(n_p, (c + 1) * size)):
@@ -113,10 +115,13 @@ def _kernel_derivatives(
             gy = 0.0
             gz = 0.0
             for i in range(n_s):
-                k, kx, ky, kz = _pair(
-                    coords[i, 0] - px,
-                    coords[i, 1] - py,
-                    coords[i, 2] - pz,
+                rx = coords[i, 0] - px
+                ry = coords[i, 1] - py
+                rz = coords[i, 2] - pz
+                k, kx, ky, kz, at = _pair(
+                    rx,
+                    ry,
+                    rz,
                     normals[i, 0],
                     normals[i, 1],
                     normals[i, 2],
@@ -131,13 +136,22 @@ def _kernel_derivatives(
                 acc[c, i, 1] += cp * a * ky
                 acc[c, i, 2] += cp * a * kz
                 acc[c, i, 3] += cp * k
+                acc[c, i, 4] += cp * a * rx * at
+                acc[c, i, 5] += cp * a * ry * at
+                acc[c, i, 6] += cp * a * rz * at
             J[p] = j * scale
             # R = s - r, so d/dr = -grad_R
             dJ[p, 0] = -gx * scale
             dJ[p, 1] = -gy * scale
             dJ[p, 2] = -gz * scale
     total = acc.sum(axis=0) * scale
-    return J, dJ, np.ascontiguousarray(total[:, :3]), np.ascontiguousarray(total[:, 3])
+    return (
+        J,
+        dJ,
+        np.ascontiguousarray(total[:, :3]),
+        np.ascontiguousarray(total[:, 3]),
+        np.ascontiguousarray(total[:, 4:]),
+    )
 
 
 def _f64(a: Array, shape_tail: tuple[int, ...] = ()) -> Array:
@@ -167,9 +181,20 @@ def kernel_derivatives(
     Returns (J (n_points,), dJ/dr (n_points, 3), dE/ds (n_elements, 3),
     dE/dA (n_elements,)).
     """
+    J, dJ, dE_ds, _dE_dn, dE_dA = kernel_surface_derivatives(
+        points, coords, normals, areas, delta, weights
+    )
+    return J, dJ, dE_ds, dE_dA
+
+
+def kernel_surface_derivatives(
+    points: Array, coords: Array, normals: Array, areas: Array, delta: float, weights: Array
+) -> tuple[Array, Array, Array, Array, Array]:
+    """`kernel_derivatives` with the normals' channel: (J (n_points,), dJ/dr (n_points, 3),
+    dE/ds (n_elements, 3), dE/dn (n_elements, 3), dE/dA (n_elements,))."""
     points = _f64(points, (3,))
     n_chunks = max(1, min(len(points), 4 * numba.get_num_threads()))
-    J, dJ, dE_ds, dE_dA = _kernel_derivatives(
+    J, dJ, dE_ds, dE_dA, dE_dn = _kernel_derivatives(
         points,
         _f64(coords, (3,)),
         _f64(normals, (3,)),
@@ -178,4 +203,4 @@ def kernel_derivatives(
         _f64(weights),
         n_chunks,
     )
-    return np.asarray(J), np.asarray(dJ), np.asarray(dE_ds), np.asarray(dE_dA)
+    return np.asarray(J), np.asarray(dJ), np.asarray(dE_ds), np.asarray(dE_dn), np.asarray(dE_dA)

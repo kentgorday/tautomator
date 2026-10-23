@@ -1254,9 +1254,13 @@ class TestDropSolventModels:
         )
         assert config.refinement.rrho == "refinement"
 
-    def test_no_nonelectrostatic_descriptors_yet(
-        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
+    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "CPCM/rho-DROP"])
+    def test_nonelectrostatic_descriptors_on_drop(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        model: str,
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match="not yet on MOIST's DROP cavities"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP", scoring="nonelectrostatic_descriptors = true")
+        config = self._load(tmp_toml, model, scoring="nonelectrostatic_descriptors = true")
+        assert config.scoring.nonelectrostatic_descriptors

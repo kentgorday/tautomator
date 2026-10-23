@@ -34,6 +34,7 @@ kernel for VV10, and the meta-GGA kernel contraction is not written.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -180,35 +181,63 @@ def post_scf_gradient(mf: Any, terms: NonelectrostaticTerms) -> Array:
     is ``mf.nuc_grad_method().kernel()``.
     """
     _check_supported(mf)
-    mol = mf.mol
     D = np.asarray(mf.make_rdm1(), dtype=np.float64)
     _energies, V = terms.energy_and_potential(D)
     assert V is not None
     g = terms.gradient(D)
+    ws = mf.with_solvent
 
+    def pcm_bilinear(D: Array, Z: Array) -> Array:
+        # The PCM energy's gradient at fixed density is a quadratic form in it, so the
+        # polarization identity gives its bilinear part exactly, for any t.
+        t = float(np.linalg.norm(D) / max(np.linalg.norm(Z), 1e-300))
+        plus = _pcm_gradient(ws, D + t * Z)
+        minus = _pcm_gradient(ws, D - t * Z)
+        ws._get_vind(D)  # leave the PCM's charges at the SCF density
+        return np.asarray((plus - minus) / (2.0 * t))
+
+    with lib.temporary_env(ws, equilibrium_solvation=True):
+        vresp = mf.gen_response(mf.mo_coeff, mf.mo_occ, hermi=1)
+        g += z_vector_gradient(mf, D, V, vresp, pcm_bilinear)
+    return g
+
+
+def z_vector_gradient(
+    mf: Any,
+    D: Array,
+    V: Array,
+    vresp: Callable[[Array], Array],
+    solvent_bilinear: Callable[[Array, Array], Array],
+) -> Array:
+    """tr(V dD/dR) (natm, 3) for a closed-shell SCF converged at D (module docstring).
+
+    ``vresp`` is the SCF's response to a symmetric change in the density matrix, the
+    solvent's equilibrium response included; ``solvent_bilinear(D, Z)`` the derivative,
+    with respect to the nuclei at fixed D and Z, of tr(Z dE_solv/dD), i.e. of the solvent's
+    contribution to the Fock matrix contracted with Z.
+    """
+    mol = mf.mol
     mo_coeff, mo_occ, mo_energy = mf.mo_coeff, mf.mo_occ, mf.mo_energy
     occ = mo_occ > 0
     C_o, C_v = mo_coeff[:, occ], mo_coeff[:, ~occ]
-    ws = mf.with_solvent
-    with lib.temporary_env(ws, equilibrium_solvation=True):
-        vresp = mf.gen_response(mo_coeff, mo_occ, hermi=1)
 
-        def fvind(x: Array) -> Array:
-            x = x.reshape(C_v.shape[1], C_o.shape[1])
-            dm1 = 2.0 * C_v @ x @ C_o.T
-            v = vresp(dm1 + dm1.T)
-            return np.asarray(C_v.T @ v @ C_o).ravel()
+    def fvind(x: Array) -> Array:
+        x = x.reshape(C_v.shape[1], C_o.shape[1])
+        dm1 = 2.0 * C_v @ x @ C_o.T
+        v = vresp(dm1 + dm1.T)
+        return np.asarray(C_v.T @ v @ C_o).ravel()
 
-        rhs = 4.0 * C_v.T @ V @ C_o
-        z = cphf.solve(fvind, mo_energy, mo_occ, rhs, max_cycle=CPHF_MAX_CYCLE, tol=CPHF_TOL)[
-            0
-        ].reshape(rhs.shape)
-        Z_ao = C_v @ z @ C_o.T
-        Z = Z_ao + Z_ao.T
-        X = 2.0 * C_o.T @ V @ C_o + C_o.T @ vresp(Z) @ C_o
+    rhs = 4.0 * C_v.T @ V @ C_o
+    z = cphf.solve(fvind, mo_energy, mo_occ, rhs, max_cycle=CPHF_MAX_CYCLE, tol=CPHF_TOL)[
+        0
+    ].reshape(rhs.shape)
+    Z_ao = C_v @ z @ C_o.T
+    Z = Z_ao + Z_ao.T
+    X = 2.0 * C_o.T @ V @ C_o + C_o.T @ vresp(Z) @ C_o
     W = C_o @ X @ C_o.T + C_v @ z @ np.diag(mo_energy[occ]) @ C_o.T
     W = 0.5 * (W + W.T)
 
+    g = np.zeros((mol.natm, 3))
     mf_grad = mf.nuc_grad_method()
     hcore_deriv = mf_grad.hcore_generator(mol)
     s1 = mf_grad.get_ovlp(mol)
@@ -226,7 +255,6 @@ def post_scf_gradient(mf: Any, terms: NonelectrostaticTerms) -> Array:
         * (_two_electron_gradient(mf_grad, plus) - _two_electron_gradient(mf_grad, minus))
         / (2.0 * t)
     )
-    g += 0.5 * (_pcm_gradient(ws, plus) - _pcm_gradient(ws, minus)) / (2.0 * t)
-    ws._get_vind(D)  # leave the PCM's charges at the SCF density
+    g += 0.5 * solvent_bilinear(D, Z)
     g += 0.5 * _xc_bilinear_gradient(mf, D, Z)
     return g

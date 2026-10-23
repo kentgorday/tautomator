@@ -730,16 +730,13 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 "single point."
             )
         model = scoring.solvent_model
-        if drop_solvent_model(model) is not None:
-            raise ValueError(
-                "[scoring] nonelectrostatic_descriptors are computed on PySCF's own PCM "
-                f"cavity, not yet on MOIST's DROP cavities (solvent_model = {model!r})"
-            )
-        if model is None or model.upper().replace("-", "") not in PCM_METHODS:
+        drop = drop_solvent_model(model) is not None
+        if model is None or not (drop or model.upper().replace("-", "") in PCM_METHODS):
             given = "gas-phase scoring" if model is None else f"solvent_model = {model!r}"
             raise ValueError(
                 "[scoring] nonelectrostatic_descriptors needs an analytical PCM solvent "
-                f"model (IEF-PCM, C-PCM or COSMO), not {given}"
+                f"model (IEF-PCM, C-PCM or COSMO, on PySCF's cavity or a DROP cavity), "
+                f"not {given}"
             )
 
     _validate_prefilter(ref)

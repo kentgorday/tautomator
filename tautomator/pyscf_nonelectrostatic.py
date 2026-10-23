@@ -46,7 +46,12 @@ from tautomator.cavity_quadrature import (
     cavity_grid,
     partition_gradient,
 )
-from tautomator.config import DEFAULT_MEMORY_GB, PCM_METHODS, solvent_electron_density
+from tautomator.config import (
+    DEFAULT_MEMORY_GB,
+    PCM_METHODS,
+    drop_solvent_model,
+    solvent_electron_density,
+)
 from tautomator.dispersion_kernel import kernel_derivatives, kernel_integral
 from tautomator.nonelectrostatic import (
     DELTA,
@@ -206,12 +211,16 @@ def single_point_with_descriptors(
     """A PCM single point, as `pyscf_runner.single_point` runs it, and its descriptors.
 
     Returns (total energy in hartree, descriptors at the default cavity
-    quadrature, with the solvent's electron density in the dispersion term).
+    quadrature, with the solvent's electron density in the dispersion term).  On one of
+    MOIST's DROP cavities ("<model>/<cavity>") the descriptors are those of
+    `pyscf_nonelectrostatic_drop.drop_descriptors`, on MOIST's surface.
     """
-    if solvent_model.upper().replace("-", "") not in PCM_METHODS:
+    drop = drop_solvent_model(solvent_model)
+    if drop is None and solvent_model.upper().replace("-", "") not in PCM_METHODS:
         raise ValueError(
             f"The nonelectrostatic descriptors need an analytical PCM model "
-            f"({', '.join(sorted(set(PCM_METHODS.values())))}), not {solvent_model!r}"
+            f"({', '.join(sorted(set(PCM_METHODS.values())))}), on PySCF's cavity or "
+            f"a DROP cavity, not {solvent_model!r}"
         )
     _mol, mf = pyscf_runner._build_mf(
         geom,
@@ -225,6 +234,10 @@ def single_point_with_descriptors(
         memory_gb,
     )
     energy = pyscf_runner._run_scf_robust(mf)
+    if drop is not None:
+        from tautomator.pyscf_nonelectrostatic_drop import drop_descriptors
+
+        return energy, drop_descriptors(mf, solvent_electron_density(solvent))
     return energy, descriptors(solute_from_mf(mf), solvent_electron_density(solvent))
 
 
