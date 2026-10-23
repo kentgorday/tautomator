@@ -137,9 +137,16 @@ def _load(method: str) -> tuple[Any, Any]:
     spec = _model_spec(method)
 
     import warp
+
+    # No initialisation banner on stdout: warp 1.18 logs it at LOG_INFO, and earlier
+    # releases (1.17 on linux-64) print it unless config.quiet.  Set before importing
+    # orb_models, which can initialise warp.
+    if hasattr(warp, "LOG_WARNING"):
+        warp.config.log_level = warp.LOG_WARNING
+    else:
+        setattr(warp.config, "quiet", True)  # noqa: B010 (not in 1.18's stubs)
     from orb_models.forcefield import pretrained
 
-    warp.config.quiet = True  # no initialisation banner on stdout
     weights = _verified_weights(_weights_path(spec), spec.sha256)
     log.info(f"Loading {method} from {weights}")
     with warnings.catch_warnings():

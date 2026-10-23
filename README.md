@@ -474,7 +474,7 @@ The set of things that look weird and aren't. Read before "fixing":
   one recipe. `pixi.lock` pins the commit, as for `psi4-swig-pcm` itself, and
   `pixi update moist` moves it. Change the recipe there, not here; its README
   ("The moist package") lists what it must keep for tautomator: the same
-  Python; BLAS/LAPACK from the environment (MKL on linux-64, Accelerate on
+  Python; BLAS/LAPACK from the environment (MKL on linux-64, OpenBLAS on
   osx-arm64), by building against the netlib variants of `libblas`/`liblapack`;
   and MOIST's Fortran libraries linked statically into its extension and not
   installed, so they cannot clash with the `mctc-lib` xtb brings in. Its
@@ -550,25 +550,28 @@ The set of things that look weird and aren't. Read before "fixing":
   `tree.map_structure`/`flatten`). torch comes from conda-forge and is held at
   2.8/2.9 because newer builds need pybind11-abi 11 while PySCF's xcfun needs
   abi 4; on linux-64 it is the MKL build, which moves libblas to MKL.
-- **On osx-arm64, BLAS/LAPACK is Apple's Accelerate, selected in `pixi.toml`.**
-  conda-forge defaults to OpenBLAS; `libblas = { build = "*_newaccelerate" }`
-  swaps it for every package in an environment at once, because numpy, scipy,
-  PySCF, Psi4, xtb and torch all link the generic `libblas`/`liblapack`. The
-  selector appears twice, once per environment: the psi4 environment leaves
-  the default feature out and does not inherit it.
-  Measured on an M4 Pro at 4 threads on a 20-atom molecule: OrbMol-v2 gradients
-  3.7x faster, a PySCF wB97M-V/def2-TZVPPD Fock build 1.4x, PySCF wB97X-3c
-  1.1x, and PySCF at def2-QZVPPD 1.05x — above 800 basis functions PySCF's XC
-  quadrature runs its own non-BLAS code, and its PCM integrals and VV10 never
-  used BLAS. A Psi4 1.11 wB97X-3c gradient job is 1.1-1.5x faster, more the
-  busier the machine is, for 30% less CPU time. Energies move by 1e-12 Ha
-  (PySCF) and 2e-7 Ha (Psi4). This build needs macOS 15.5, hence the
-  `macos = "15.5"` on the osx-arm64 platform entry; `*_accelerate` is the same BLAS with reference
-  LAPACK and no floor, and measured the same. BLIS is not an option (PySCF gets
-  a NaN Fock matrix), nor pthreads OpenBLAS (pytorch excludes it). Accelerate
-  ignores `OMP_NUM_THREADS` — its own threads answer to
-  `VECLIB_MAXIMUM_THREADS` — but left alone a job given N threads used at most
-  8% more than N cores. linux-64 is untouched.
+- **BLAS/LAPACK is conda-forge's default, not Apple's Accelerate.** On
+  osx-arm64 that is OpenBLAS (its OpenMP build, the one pytorch accepts); on
+  linux-64 the pytorch build moves it to MKL. numpy, scipy, PySCF, Psi4, xtb,
+  torch and MOIST all link the generic `libblas`/`liblapack`, so `pixi.toml`
+  names no variant. Accelerate (`libblas = { build = "*_newaccelerate" }` or
+  `"*_accelerate"`) was faster — OrbMol-v2 gradients 3.7x, a PySCF
+  wB97M-V/def2-TZVPPD Fock build 1.4x, a Psi4 wB97X-3c gradient job 1.1-1.5x,
+  PySCF at def2-QZVPPD 1.05x (M4 Pro, 4 threads, a 20-atom molecule) — but its
+  Cholesky factorization of the upper triangle (`dpotrf` with `uplo = 'U'`) is
+  broken on macOS 27.0.1, in both of its LAPACK interfaces, which share the
+  code. For orders of about 1450-5500 it reads and writes outside its matrix
+  (Guard Malloc faults inside Accelerate's `libLAPACK.dylib`; lower-triangle
+  `dpotrf`, `getrf`, `syevd` and the other routines checked are clean), and
+  the heap it corrupts crashes Python later: a loop of 30 such factorizations
+  segfaulted in half its runs. Through the newer interface it also fails, or
+  returns a wrong factor, for orders 2048-3712. scipy 1.18's
+  `cholesky(lower=True)` and `cho_factor(lower=True)` take that path, so
+  psi4-swig-pcm's check of every cavity of more than about 12 atoms and PySCF's
+  density fitting of molecules above about 30 atoms (metric, J/K and gradient)
+  call it. conda-forge does not pair Accelerate's BLAS with another LAPACK.
+  BLIS is not an option either (PySCF gets a NaN Fock matrix), nor pthreads
+  OpenBLAS (pytorch excludes it).
 - **D4 composite Hessians fall up to wB97X-V** (`_HESSIAN_FALLBACK`). PySCF
   has no analytical D4 Hessian, but VV10 *is* analytical. Vibrational
   frequencies are insensitive to the dispersion correction, so this is a free

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -87,6 +89,20 @@ class TestWithoutModel:
 
 @pytest.mark.slow  # loads a 100 MB model (downloaded on first use)
 class TestAgainstTrainingLevel:
+    def test_loading_prints_nothing(self) -> None:
+        # warp prints an initialisation banner unless told not to before orb_models
+        # initialises it; a fresh process, since this one may have loaded it already.
+        code = (
+            "import numpy as np\n"
+            "from tautomator import orbmol_runner\n"
+            "from tautomator.types import Geometry\n"
+            "geom = Geometry(('O', 'H'), np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.97]]))\n"
+            f"orbmol_runner.single_point(geom, -1, {METHOD!r})\n"
+        )
+        run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert run.stdout == ""
+
     def test_energies(self) -> None:
         e_water = orbmol_runner.single_point(WATER, 0, METHOD)
         e_oh = orbmol_runner.single_point(HYDROXIDE, -1, METHOD)
