@@ -27,10 +27,11 @@ Scoring always recomputes electronic + solvation and carries RRHO over.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
@@ -530,7 +531,12 @@ _DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM", "psi4": "IEFPCM"}
 # TOML loading + validation
 # ---------------------------------------------------------------------------
 def load_config(path: Path) -> PkaConfig:
-    """Load and validate a pKa workflow config from a TOML file."""
+    """Load and validate a pKa workflow config from a TOML file.
+
+    Every key must be a setting of its section (or a deprecated spelling of one): an
+    unknown key is an error, not ignored, so that a misspelled or retired setting cannot
+    leave a run on its default unnoticed.
+    """
     raw = tomllib.loads(path.read_text())
     protocol = raw.get("protocol")
     if protocol is not None and protocol not in PROTOCOLS:
@@ -555,8 +561,19 @@ def load_config(path: Path) -> PkaConfig:
     mol_raw = dict(mol_raw)
 
     ref_raw, score_raw, compute_raw = section("refinement"), section("scoring"), section("compute")
+    samp_raw = section("sampling")
     _migrate(ref_raw, score_raw, compute_raw, mol_raw)
     _fit_preset_solvation(ref_raw, raw.get("refinement", {}), score_raw)
+    _check_settings(
+        raw,
+        {
+            "molecule": mol_raw,
+            "sampling": samp_raw,
+            "refinement": ref_raw,
+            "scoring": score_raw,
+            "compute": compute_raw,
+        },
+    )
 
     molecule = MoleculeConfig(
         smiles=mol_raw["smiles"],
@@ -587,7 +604,6 @@ def load_config(path: Path) -> PkaConfig:
     if compute.driver not in DRIVERS:
         raise ValueError(f"Unknown driver: {compute.driver!r} (must be 'psi4' or 'pyscf')")
 
-    samp_raw = section("sampling")
     sampling = SamplingConfig(
         approach=samp_raw.get("approach", "rdkit_first"),
         ewin=samp_raw.get("ewin", 10.0),
@@ -950,6 +966,62 @@ def _warn_no_diffuse(scoring: ScoringConfig) -> None:
             "zwitterions and 0.7-0.9 for ammonium ions (0.5-2.0 pKa), and def2-SVP "
             "above def2-SVPD by 4-16. Use an augmented set such as def2-TZVPPD."
         )
+
+
+# The settings a config file may give, by section: each section's fields, less those the
+# loader derives itself.  _check_settings refuses anything else.
+_SETTINGS: dict[str, frozenset[str]] = {
+    name: frozenset(f.name for f in fields(cls)) - derived
+    for name, cls, derived in (
+        ("molecule", MoleculeConfig, frozenset()),
+        ("sampling", SamplingConfig, frozenset()),
+        ("refinement", RefinementConfig, frozenset({"engine"})),
+        ("scoring", ScoringConfig, frozenset()),
+        ("compute", ComputeConfig, frozenset()),
+    )
+}
+
+# Settings that were removed rather than renamed, by (section, key): what to use instead.
+# _check_settings refuses them like any unknown key, with this as the hint.
+_RETIRED: dict[tuple[str, str], str] = {
+    ("scoring", "rrho_level"): "[refinement] rrho sets where the RRHO comes from",
+}
+
+
+def _check_settings(raw: dict[str, Any], sections: dict[str, dict[str, Any]]) -> None:
+    """Refuse every key the loader would not read, saying where it belongs when it can.
+
+    ``raw`` is the file; ``sections`` its sections as the loader reads them (the preset's
+    settings and the file's), after _migrate has taken the deprecated spellings out.
+    """
+    top = frozenset({"protocol", *_SETTINGS})
+    unknown = [f"{key!r} at the top level{_hint(key, top)}" for key in raw if key not in top]
+    for name, section in sections.items():
+        unknown += [
+            f"[{name}] {key}{_hint(key, _SETTINGS[name], name)}"
+            for key in section
+            if key not in _SETTINGS[name]
+        ]
+    if unknown:
+        raise ValueError(f"Unknown config setting(s): {'; '.join(unknown)}")
+
+
+def _hint(key: str, allowed: frozenset[str], section: str | None = None) -> str:
+    """What a retired, misplaced or misspelled key should be, in parentheses, or ''."""
+    if section is not None and (section, key) in _RETIRED:
+        return f" (retired: {_RETIRED[section, key]})"
+    elsewhere = [
+        f"[{name}]" for name, keys in _SETTINGS.items() if name != section and key in keys
+    ]
+    if elsewhere:
+        where = (
+            elsewhere[0]
+            if len(elsewhere) == 1
+            else f"{', '.join(elsewhere[:-1])} or {elsewhere[-1]}"
+        )
+        return f" (a setting of {where})"
+    close = difflib.get_close_matches(key, sorted(allowed), n=1)
+    return f" (did you mean {close[0]!r}?)" if close else ""
 
 
 def _fit_preset_solvation(

@@ -8,6 +8,8 @@ import pytest
 
 from tautomator import xtb_runner
 from tautomator.config import (
+    _SETTINGS,
+    PROTOCOLS,
     SOLVENT_DIELECTRIC,
     PkaConfig,
     _has_diffuse,
@@ -1273,6 +1275,74 @@ class TestDropSolventModels:
         moist_installed(True)
         with pytest.raises(ValueError, match="not yet on MOIST's DROP cavities"):
             self._load(tmp_toml, "IEFPCM/SvdW-DROP", scoring="nonelectrostatic_descriptors = true")
+
+
+class TestUnknownSettings:
+    """A key the loader does not read is an error, not a silent default."""
+
+    def _load(self, tmp_toml: Callable[[str], Path], text: str) -> PkaConfig:
+        return load_config(tmp_toml(f'[molecule]\nsmiles = "CCO"\n{text}\n'))
+
+    @pytest.mark.parametrize(
+        ("section", "key", "meant"),
+        [
+            ("molecule", "solvnet", "solvent"),
+            ("sampling", "ewni", "ewin"),
+            ("refinement", "rrhoo", "rrho"),
+            ("scoring", "solvent_modle", "solvent_model"),
+            ("compute", "memroy_gb", "memory_gb"),
+        ],
+    )
+    def test_misspelled_setting(
+        self, tmp_toml: Callable[[str], Path], section: str, key: str, meant: str
+    ) -> None:
+        text = f'{key} = "x"' if section == "molecule" else f'[{section}]\n{key} = "x"'
+        with pytest.raises(ValueError, match=rf"\[{section}\] {key} \(did you mean '{meant}'\?\)"):
+            self._load(tmp_toml, text)
+
+    @pytest.mark.parametrize(
+        ("text", "where"),
+        [
+            ("[scoring]\nthreads = 4", r"\[scoring\] threads \(a setting of \[compute\]\)"),
+            ("[compute]\newin = 5.0", r"a setting of \[sampling\], \[refinement\] or \[scoring\]"),
+        ],
+    )
+    def test_setting_of_another_section(
+        self, tmp_toml: Callable[[str], Path], text: str, where: str
+    ) -> None:
+        with pytest.raises(ValueError, match=where):
+            self._load(tmp_toml, text)
+
+    def test_top_level(self, tmp_toml: Callable[[str], Path]) -> None:
+        # a section's setting outside its section, and a misspelled section
+        with pytest.raises(ValueError) as err:
+            load_config(
+                tmp_toml('memory_gb = 4\n[molecule]\nsmiles = "CCO"\n[scorng]\newin = 5.0\n')
+            )
+        message = str(err.value)
+        assert "'memory_gb' at the top level (a setting of [compute])" in message
+        assert "'scorng' at the top level (did you mean 'scoring'?)" in message
+
+    def test_derived_field_is_not_a_setting(self, tmp_toml: Callable[[str], Path]) -> None:
+        # the method decides the refinement engine
+        with pytest.raises(ValueError, match=r"\[refinement\] engine"):
+            self._load(tmp_toml, '[refinement]\nengine = "orbmol"')
+
+    def test_retired_setting_says_what_replaced_it(self, tmp_toml: Callable[[str], Path]) -> None:
+        # rrho_level went in June 2026 without a migration, and was ignored from then on
+        with pytest.raises(
+            ValueError, match=r"\[scoring\] rrho_level \(retired: \[refinement\] rrho sets"
+        ):
+            self._load(tmp_toml, '[scoring]\nrrho_level = "refinement"')
+
+    def test_no_hint_without_a_likely_setting(self, tmp_toml: Callable[[str], Path]) -> None:
+        with pytest.raises(ValueError, match=r"\[scoring\] zzz$"):
+            self._load(tmp_toml, "[scoring]\nzzz = 1")
+
+    @pytest.mark.parametrize("protocol", sorted(PROTOCOLS))
+    def test_presets_give_only_settings(self, protocol: str) -> None:
+        for section, settings in PROTOCOLS[protocol].items():
+            assert set(settings) <= _SETTINGS[section], (protocol, section)
 
 
 class TestPcmRadii:

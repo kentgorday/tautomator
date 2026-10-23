@@ -286,7 +286,11 @@ for the VV10 NLC grid. These aren't user-tunable on purpose.
 One TOML file, five sections (`[molecule]`, `[sampling]`, `[refinement]`,
 `[scoring]`, `[compute]`), loaded by `config.load_config`. The config says
 which *physics* goes into each energy term; the runners decide how to get it
-(analytic vs finite-difference Hessians, grids, cavity construction).
+(analytic vs finite-difference Hessians, grids, cavity construction). A key that
+is not a setting of its section is an error, with the setting it most likely
+meant or the section it belongs in, rather than ignored: a misspelled or
+retired setting would otherwise leave the run on its default without a word.
+The deprecated spellings are still accepted, with a warning.
 
 A top-level `protocol` key fills in every level of theory and window at once;
 anything written in the file wins over the preset. With gas-phase scoring
