@@ -1328,13 +1328,6 @@ class TestUnknownSettings:
         with pytest.raises(ValueError, match=r"\[refinement\] engine"):
             self._load(tmp_toml, '[refinement]\nengine = "orbmol"')
 
-    def test_retired_setting_says_what_replaced_it(self, tmp_toml: Callable[[str], Path]) -> None:
-        # rrho_level went in June 2026 without a migration, and was ignored from then on
-        with pytest.raises(
-            ValueError, match=r"\[scoring\] rrho_level \(retired: \[refinement\] rrho sets"
-        ):
-            self._load(tmp_toml, '[scoring]\nrrho_level = "refinement"')
-
     def test_no_hint_without_a_likely_setting(self, tmp_toml: Callable[[str], Path]) -> None:
         with pytest.raises(ValueError, match=r"\[scoring\] zzz$"):
             self._load(tmp_toml, "[scoring]\nzzz = 1")

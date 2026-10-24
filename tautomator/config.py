@@ -981,12 +981,6 @@ _SETTINGS: dict[str, frozenset[str]] = {
     )
 }
 
-# Settings that were removed rather than renamed, by (section, key): what to use instead.
-# _check_settings refuses them like any unknown key, with this as the hint.
-_RETIRED: dict[tuple[str, str], str] = {
-    ("scoring", "rrho_level"): "[refinement] rrho sets where the RRHO comes from",
-}
-
 
 def _check_settings(raw: dict[str, Any], sections: dict[str, dict[str, Any]]) -> None:
     """Refuse every key the loader would not read, saying where it belongs when it can.
@@ -1007,9 +1001,7 @@ def _check_settings(raw: dict[str, Any], sections: dict[str, dict[str, Any]]) ->
 
 
 def _hint(key: str, allowed: frozenset[str], section: str | None = None) -> str:
-    """What a retired, misplaced or misspelled key should be, in parentheses, or ''."""
-    if section is not None and (section, key) in _RETIRED:
-        return f" (retired: {_RETIRED[section, key]})"
+    """Where a misplaced or misspelled key probably belongs, in parentheses, or ''."""
     elsewhere = [
         f"[{name}]" for name, keys in _SETTINGS.items() if name != section and key in keys
     ]
