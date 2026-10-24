@@ -835,10 +835,16 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -
     # Psi4 takes its frequencies as finite differences of analytical gradients, which
     # MOIST has; PySCF's are analytical Hessians, which MOIST does not have.
     if ref.rrho == "refinement" and ref.solvation == "optimize" and ref.engine == "pyscf":
+        default = (
+            ", the default solvent model since SvdW-DROP replaced PySCF's cavity"
+            if model == _DEFAULT_SOLVENT_MODEL["pyscf"]
+            else ""
+        )
         raise ValueError(
             f"[refinement] rrho = 'refinement' with solvation = 'optimize' needs a Hessian "
-            f"in solvent, and MOIST's PCM ({model!r}) has none on the pyscf driver. Use "
-            "rrho = 'xtb', or the psi4 driver (finite differences of gradients)."
+            f"in solvent, and MOIST's PCM ({model!r}{default}) has none on the pyscf "
+            "driver. Use rrho = 'xtb'; solvent_model = 'IEFPCM' (PySCF's own cavity, which "
+            "has one); or the psi4 driver (finite differences of gradients)."
         )
 
 

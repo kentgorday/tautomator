@@ -48,4 +48,6 @@ line-length = 99
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
-markers = ["slow: marks tests that call external programs (xtb, crest) or load the OrbMol model"]
+markers = [
+    "slow: marks tests that call external programs (xtb, crest), load the OrbMol model or take minutes",
+]

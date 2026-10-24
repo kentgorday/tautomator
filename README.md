@@ -474,7 +474,7 @@ pixi run lint
 pixi run format
 pixi run typecheck
 pytest                  # excludes external-tool tests by default
-pytest -m slow          # tests that shell out to xtb/crest
+pytest -m slow          # tests that shell out to xtb/crest, or take minutes
 ```
 
 Pre-commit hook runs ruff. Mypy is strict.

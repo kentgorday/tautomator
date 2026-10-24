@@ -169,7 +169,8 @@ def test_gradient_at_fixed_density(cavity: str, density: np.ndarray) -> None:
         assert g[atom, k] == pytest.approx(fd, abs=2e-7)
 
 
-@pytest.mark.parametrize("cavity", CAVITIES)
+# rho-DROP's takes 8 minutes on an idle machine (its surface moves with the density)
+@pytest.mark.parametrize("cavity", ["SvdW-DROP", pytest.param("rho-DROP", marks=pytest.mark.slow)])
 def test_self_consistent_gradient(cavity: str) -> None:
     def run(coords: np.ndarray | None = None, dm0: np.ndarray | None = None) -> Any:
         mf = _moist_mf(_mol(coords), cavity)
