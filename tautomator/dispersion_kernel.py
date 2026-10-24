@@ -181,7 +181,7 @@ def kernel_derivatives(
     Returns (J (n_points,), dJ/dr (n_points, 3), dE/ds (n_elements, 3),
     dE/dA (n_elements,)).
     """
-    J, dJ, dE_ds, _dE_dn, dE_dA = kernel_surface_derivatives(
+    J, dJ, dE_ds, dE_dA, _dE_dn = kernel_surface_derivatives(
         points, coords, normals, areas, delta, weights
     )
     return J, dJ, dE_ds, dE_dA
@@ -190,8 +190,9 @@ def kernel_derivatives(
 def kernel_surface_derivatives(
     points: Array, coords: Array, normals: Array, areas: Array, delta: float, weights: Array
 ) -> tuple[Array, Array, Array, Array, Array]:
-    """`kernel_derivatives` with the normals' channel: (J (n_points,), dJ/dr (n_points, 3),
-    dE/ds (n_elements, 3), dE/dn (n_elements, 3), dE/dA (n_elements,))."""
+    """`kernel_derivatives` with the normals' channel last: (J (n_points,), dJ/dr
+    (n_points, 3), dE/ds (n_elements, 3), dE/dA (n_elements,), dE/dn (n_elements, 3)), the
+    order of psi4-swig-pcm's dispersion_kernel."""
     points = _f64(points, (3,))
     n_chunks = max(1, min(len(points), 4 * numba.get_num_threads()))
     J, dJ, dE_ds, dE_dA, dE_dn = _kernel_derivatives(
@@ -203,4 +204,4 @@ def kernel_surface_derivatives(
         _f64(weights),
         n_chunks,
     )
-    return np.asarray(J), np.asarray(dJ), np.asarray(dE_ds), np.asarray(dE_dn), np.asarray(dE_dA)
+    return np.asarray(J), np.asarray(dJ), np.asarray(dE_ds), np.asarray(dE_dA), np.asarray(dE_dn)

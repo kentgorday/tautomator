@@ -87,14 +87,22 @@ def check_descriptor_models(solvent_model: str | None, descriptor_models: Sequen
             "The nonelectrostatic descriptors need an analytical PCM solvent model (IEF-PCM, "
             f"C-PCM or COSMO, on PySCF's cavity or a DROP cavity), not {solvent_model!r}"
         )
-    seen = {solvent_model.upper().replace("-", "")}
+    own = solvent_model.upper().replace("-", "")
+    seen: set[str] = set()
     for model in descriptor_models:
         key = model.upper().replace("-", "")
-        if key in seen or not analytical(model):
+        if not analytical(model):
             raise ValueError(
-                f"descriptor model {model!r}: not an analytical PCM model, or the run's own "
-                "or listed twice"
+                f"descriptor model {model!r} is not an analytical PCM model (IEF-PCM, C-PCM "
+                "or COSMO, on PySCF's cavity or a DROP cavity)"
             )
+        if key == own:
+            raise ValueError(
+                f"descriptor model {model!r} is the run's own solvent model, whose "
+                "descriptors are saved anyway"
+            )
+        if key in seen:
+            raise ValueError(f"descriptor model {model!r} is listed twice")
         seen.add(key)
 
 
@@ -314,6 +322,8 @@ def score(
                 "solvent_rho": solvent_electron_density(solvent),
                 "delta": DELTA,
                 "vv_c": VV_C,
+                # what Descriptors.charge_field is built from, on either kind of cavity
+                "charge_field": "apparent surface charges q",
                 **_quadrature_settings(name or solvent_model),
             }
             if name is None:

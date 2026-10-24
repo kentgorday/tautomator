@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tautomator.dispersion_kernel import Array, kernel_derivatives, kernel_integral
+from tautomator.dispersion_kernel import (
+    Array,
+    kernel_derivatives,
+    kernel_integral,
+    kernel_surface_derivatives,
+)
 
 DELTA = 7.0
 
@@ -95,3 +100,32 @@ class TestKernel:
             np.zeros((1, 3)), coords, normals, areas, DELTA, np.ones(1)
         )
         assert np.all(np.isfinite(J)) and np.all(np.isfinite(dJ))
+
+
+def test_normals_channel() -> None:
+    """On a DROP surface the normals move: dE/dn, last in kernel_surface_derivatives, as
+    psi4-swig-pcm's dispersion_kernel orders it; the first four are kernel_derivatives'."""
+    rng = np.random.default_rng(1)
+    points = rng.normal(size=(40, 3))
+    coords = 3.0 * rng.normal(size=(25, 3))
+    normals = rng.normal(size=(25, 3))
+    normals /= np.linalg.norm(normals, axis=1)[:, None]
+    areas = rng.uniform(0.1, 1.0, 25)
+    weights = rng.normal(size=40)
+    out = kernel_surface_derivatives(points, coords, normals, areas, DELTA, weights)
+    for a, b in zip(
+        out[:4], kernel_derivatives(points, coords, normals, areas, DELTA, weights), strict=True
+    ):
+        np.testing.assert_array_equal(a, b)
+    dE_dn = out[4]
+    # linear in each normal, so a large step costs no truncation error
+    h = 0.1
+    for i, k in ((0, 0), (7, 2), (24, 1)):
+        plus, minus = normals.copy(), normals.copy()
+        plus[i, k] += h
+        minus[i, k] -= h
+        numeric = (
+            weights @ kernel_integral(points, coords, plus, areas, DELTA)
+            - weights @ kernel_integral(points, coords, minus, areas, DELTA)
+        ) / (2 * h)
+        assert dE_dn[i, k] == pytest.approx(numeric, rel=1e-10)

@@ -113,7 +113,7 @@ psi4 = ">=1.11,<2"
 # analytical gradients and the nonelectrostatic correction (LGPL-3.0, like Psi4,
 # hence a repository of its own).  Built from source by pixi-build, at the commit
 # `rev` names (its nonelectrostatic-drop branch, until that is on its main).
-psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "6d515cc386fad9f1da72f545758e41f60ee02606" }
+psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "11b8abc0c98060fbbcb7d3288ee0105bdc4d3470" }
 # Psi4's optimizer (optking) converts units through qcelemental's pint registry, which
 # qcelemental 0.51.2 and 0.51.3 cannot build under pint 0.26.2 (pint rejects their
 # "J^{-2}"): with either, psi4.optimize fails.  0.51.4 works with pint 0.26.1 and 0.26.2.
@@ -135,7 +135,7 @@ gcp-correction = ">=2.3.2,<3"
 # on its main), the same as psi4-swig-pcm's above.  The first install compiles MOIST (about 9
 # minutes on 4 cores, once: both environments get the same build).
 [feature.moist.dependencies]
-moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "6d515cc386fad9f1da72f545758e41f60ee02606", subdirectory = "packages/moist" }
+moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "11b8abc0c98060fbbcb7d3288ee0105bdc4d3470", subdirectory = "packages/moist" }
 
 [environments]
 # Both with MOIST, as the default solvent model needs it.  Every Psi4 job of a run, DROP

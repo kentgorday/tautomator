@@ -166,13 +166,9 @@ PCM_METHODS: dict[str, str] = {
 # MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
 # e/bohr^3), which follows the density through the SCF.  On the pyscf driver they run
 # through tautomator.pyscf_moist, on the psi4 driver through psi4-swig-pcm's MOIST host;
-# both the default and the psi4 environment have MOIST.  Normalized name (upper case, no
-# hyphens) -> MOIST's name.
-DROP_CAVITIES: dict[str, str] = {
-    "SVDWDROP": "SvdW-DROP",
-    "RHODROP": "rho-DROP",
-    "ISODENSITYDROP": "rho-DROP",
-}
+# both the default and the psi4 environment have MOIST.  A cavity has one name, written
+# exactly as here: no other case, spelling or alias is taken for it.
+DROP_CAVITIES: tuple[str, ...] = ("SvdW-DROP", "rho-DROP")
 
 # The MOIST classes both drivers build a DROP model from: each cavity's level-set function
 # (moist.DROP(lsf=moist.SvdW(), ...)) and each PCM method's component
@@ -204,12 +200,17 @@ DROP_PRUNE_LEVEL = 4
 
 
 def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
-    """(PCM method, MOIST cavity name) of a "<model>/<cavity>" solvent model, else None."""
+    """(PCM method, MOIST cavity name) of a "<model>/<cavity>" solvent model, else None.
+
+    The PCM model takes the spellings it takes on PySCF's cavity (IEFPCM, IEF-PCM, PCM,
+    ...); the cavity must be one of DROP_CAVITIES exactly.
+    """
     if model is None:
         return None
-    pcm, sep, cavity = model.upper().replace("-", "").partition("/")
+    pcm, sep, cavity = model.partition("/")
+    pcm = pcm.upper().replace("-", "")
     if sep and pcm in PCM_METHODS and cavity in DROP_CAVITIES:
-        return PCM_METHODS[pcm], DROP_CAVITIES[cavity]
+        return PCM_METHODS[pcm], cavity
     return None
 
 
@@ -728,7 +729,13 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
 
     if scoring.solvent_model is not None:
         allowed = _SOLVENT_MODELS[compute.driver]
-        if scoring.solvent_model.upper().replace("-", "") not in {m.upper() for m in allowed}:
+        model = scoring.solvent_model
+        known = (
+            drop_solvent_model(model) is not None
+            if "/" in model
+            else model.upper().replace("-", "") in {m.upper() for m in allowed}
+        )
+        if not known:
             raise ValueError(
                 f"[scoring] solvent_model = {scoring.solvent_model!r} is not available "
                 f"on the {compute.driver} driver (has: {_spelled(allowed)})."
@@ -751,7 +758,7 @@ def _spelled(models: set[str]) -> str:
     """Solvent model names as the README spells them, DROP cavities by their pattern."""
     plain = sorted(m for m in models if "/" not in m)
     if any("/" in m for m in models):
-        cavities = sorted(set(DROP_CAVITIES.values()), key=str.lower, reverse=True)
+        cavities = list(DROP_CAVITIES)
         pcm = "/".join(m for m in plain if m in PCM_METHODS and m != "PCM")
         plain.append(f"<{pcm}>/<{' or '.join(cavities)}> (e.g. IEFPCM/SvdW-DROP)")
     return ", ".join(plain)

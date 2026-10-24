@@ -222,3 +222,14 @@ def test_descriptors_reproduce_the_terms(cavity: str) -> None:
     assert d.element_atoms.min() == 0 and d.element_atoms.max() == mol.natm - 1
     cov = np.cov(d.normal_field, d.charge_field, aweights=d.areas)
     assert cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1]) > 0.9
+    # built from IEF-PCM's apparent charges q, not the potential adjoint w_phi
+    driver = mf.with_moist._driver()
+    q = np.asarray(driver.model.components[0].get("q"))
+    w_phi = next(
+        np.asarray(item.w_phi)
+        for item in driver.response
+        if isinstance(item, moist.PotentialAdjointResponse)
+    )
+    scale = (78.3553 - 1.0) / 78.3553
+    np.testing.assert_allclose(d.charge_field, -4.0 * np.pi / scale * q / d.areas, rtol=1e-12)
+    assert np.abs(q - w_phi).max() > 1e-5 * np.abs(q).max()

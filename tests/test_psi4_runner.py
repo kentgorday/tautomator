@@ -109,8 +109,8 @@ class TestMoistBlock:
         [
             ("IEFPCM/SvdW-DROP", "ModelComponentIEFPCM", "SvdW"),
             ("PCM/rho-DROP", "ModelComponentIEFPCM", "Isodensity"),
-            ("C-PCM/isodensity-DROP", "ModelComponentCPCM", "Isodensity"),
-            ("COSMO/svdw-drop", "ModelComponentCOSMO", "SvdW"),
+            ("C-PCM/rho-DROP", "ModelComponentCPCM", "Isodensity"),
+            ("COSMO/SvdW-DROP", "ModelComponentCOSMO", "SvdW"),
         ],
     )
     def test_names_the_model_and_cavity(self, model: str, component: str, lsf: str) -> None:
@@ -578,8 +578,8 @@ def test_drop_solvation_energy_matches_pyscf(
 ) -> None:
     """psi4-swig-pcm's MOIST host and pyscf_moist solve the same model on the same cavity.
 
-    Runs in the moist environment (PySCF's side imports MOIST in process), with the psi4
-    environment beside it.
+    Runs where MOIST is importable (the default environment: PySCF's side imports it in
+    process), with the psi4 environment beside it.
     """
     _require_psi4_with_moist()
     pytest.importorskip("moist")

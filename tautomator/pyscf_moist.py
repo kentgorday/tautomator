@@ -583,7 +583,7 @@ def attach(mf: Any, *, cavity: Any, components: Sequence[Any], context: Any) -> 
                 f"MOIST {moist.__version__} is not a release tautomator.pyscf_moist was "
                 f"checked against ({', '.join(unchecked)} changed), so only MOIST's own PySCF "
                 "code could run, and it refuses ECPs, which this molecule has (vDZP puts one on "
-                "every atom but H).  Run tests/test_pyscf_moist.py in the moist environment; "
+                "every atom but H).  Run tests/test_pyscf_moist.py with it; "
                 "if it passes, add the fingerprints it prints to CHECKED in "
                 "tautomator/pyscf_moist.py."
             )

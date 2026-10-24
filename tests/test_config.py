@@ -1095,10 +1095,14 @@ class TestDropSolventModels:
         ("model", "parsed"),
         [
             ("IEFPCM/SvdW-DROP", ("IEF-PCM", "SvdW-DROP")),
-            ("ief-pcm/svdw-drop", ("IEF-PCM", "SvdW-DROP")),
+            ("ief-pcm/SvdW-DROP", ("IEF-PCM", "SvdW-DROP")),
             ("PCM/rho-DROP", ("IEF-PCM", "rho-DROP")),
-            ("CPCM/isodensity-DROP", ("C-PCM", "rho-DROP")),
             ("COSMO/SvdW-DROP", ("COSMO", "SvdW-DROP")),
+            # one name per cavity, written exactly
+            ("CPCM/isodensity-DROP", None),
+            ("IEFPCM/svdw-drop", None),
+            ("IEFPCM/SVDWDROP", None),
+            ("IEFPCM/Rho-DROP", None),
             ("IEFPCM", None),
             ("SMD/SvdW-DROP", None),
             ("IEFPCM/ISWIG", None),
@@ -1164,7 +1168,7 @@ class TestDropSolventModels:
         # both drivers build the model from these; a name missing here would fail every job
         from tautomator.config import DROP_CAVITIES, DROP_COMPONENTS, DROP_LSF, PCM_METHODS
 
-        assert set(DROP_LSF) == set(DROP_CAVITIES.values())
+        assert set(DROP_LSF) == set(DROP_CAVITIES)
         assert set(DROP_COMPONENTS) == set(PCM_METHODS.values())
 
     def test_those_classes_are_moists(self) -> None:
@@ -1183,6 +1187,17 @@ class TestDropSolventModels:
             self._load(tmp_toml, "IEFPCM/sphere-DROP")
         assert "SvdW-DROP or rho-DROP" in str(err.value)
         assert "SVDWDROP" not in str(err.value)
+
+    @pytest.mark.parametrize("model", ["IEFPCM/isodensity-DROP", "IEFPCM/svdw-drop"])
+    def test_one_name_per_cavity(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        model: str,
+    ) -> None:
+        moist_installed(True)
+        with pytest.raises(ValueError, match="not available on the pyscf driver"):
+            self._load(tmp_toml, model)
 
     def test_needs_moist(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]

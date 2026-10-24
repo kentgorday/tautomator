@@ -191,17 +191,20 @@ score. All three drivers implement the same three operations (`single_point`,
   available; on Linux it can, so the limit there is lower.
 
   The same PCM models also run on MOIST's DROP cavities
-  (`tautomator/pyscf_moist.py`; MOIST is in the default environment): `solvent_model =
-  "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and cavity `SvdW-DROP`
-  (a smooth solvent-excluded-like surface over MOIST's CPCM radii) or
-  `rho-DROP` (the electron isodensity surface, rho_iso = 1e-3 e/bohr³, which
-  follows the density through the SCF), e.g. `"IEFPCM/SvdW-DROP"`, the default
-  solvent model. Both drivers build them with 434 Lebedev points per sphere and
+  (`tautomator/pyscf_moist.py`; MOIST is in the default environment):
+  `solvent_model = "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and
+  cavity `SvdW-DROP` (a smooth solvent-excluded-like surface over MOIST's CPCM
+  radii) or `rho-DROP` (the electron isodensity surface, rho_iso = 1e-3
+  e/bohr³, which follows the density through the SCF), e.g.
+  `"IEFPCM/SvdW-DROP"`, the default solvent model. The model is spelled as for
+  PySCF's cavity (`IEF-PCM` works too); the cavity only exactly so, with no
+  other names. Both drivers build them with 434 Lebedev points per sphere and
   MOIST's pruning level 4 (`config.DROP_NLEB`, `DROP_PRUNE_LEVEL`): MOIST's own
   default, 194, left the PCM energy of small anions up to 0.28 kcal/mol off,
   434 keeps 42 test solutes within 0.1 kcal/mol (docs/nonelectrostatic.md, "On
-  MOIST's DROP cavities"). The psi4 driver runs them too (see below). Water at wB97X-3c/vDZP: −6.9 and −7.2
-  kcal/mol, against −6.5 on PySCF's cavity. Both have analytical gradients, so
+  MOIST's DROP cavities"). The psi4 driver runs them too (see below). Water at
+  wB97X-3c/vDZP (MMFF geometry): −7.1 kcal/mol on SvdW-DROP and −7.3 on
+  rho-DROP, against −6.6 on PySCF's cavity. Both have analytical gradients, so
   refinement minimizes in them, and both take vDZP's ECPs, which MOIST's own
   PySCF code refuses. On PySCF they have no Hessian (`rrho = "refinement"` with
   `solvation = "optimize"` is refused; the psi4 driver has one). The
@@ -212,18 +215,19 @@ score. All three drivers implement the same three operations (`single_point`,
   refused). On PySCF, MOIST solves the PCM and tautomator's
   own code supplies its integrals, as FastPCM keeps them, and in bounded
   memory. An IEF-PCM energy and gradient on acetaminophen (wB97X/def2-SVP, 4
-  threads), against the gas-phase job:
+  threads, nleb 434), against the gas-phase job:
 
   | | tautomator | MOIST's own PySCF code |
   |---|---|---|
-  | SvdW-DROP, surface integrals kept | 1.25x | 2.9x |
-  | SvdW-DROP, too big to keep | 1.7x | 2.9x, in one unbounded block |
-  | rho-DROP | 3.0x | 6.6x |
+  | SvdW-DROP, surface integrals kept | 1.5x | 4.0x |
+  | SvdW-DROP, too big to keep | 2.7x | 4.0x, in one unbounded block |
+  | rho-DROP | 4.8x | 11.9x |
 
+  (At MOIST's default nleb 194: 1.2x, 1.8x and 2.9x, against 2.5x and 6.5x.)
   The surface integrals are kept, as with FastPCM, while they fit in half of
   what `[compute] memory_gb` leaves; otherwise they are recomputed in blocks
   twice per SCF iteration, as MOIST's own code does but in bounded memory
-  (its one block for acetaminophen at def2-QZVPPD would be 13.7 GB). rho-DROP
+  (its one block for acetaminophen at def2-QZVPPD would be 27 GB). rho-DROP
   costs more whether or not they fit: its surface moves every SCF iteration,
   so every iteration also needs the derivatives of the potential at the moved
   points and with respect to their Gaussian widths, which a fixed surface
@@ -261,8 +265,8 @@ score. All three drivers implement the same three operations (`single_point`,
   rho-DROP), and to ~3e-6 kcal/mol with vDZP's ECPs, whose integrals the two
   programs compute differently (their gas-phase energies differ by up to 2e-4
   kcal/mol). A wB97X-3c/vDZP single point on acetaminophen (4 threads) costs
-  1.17x the gas-phase job on SvdW-DROP and 3.9x on rho-DROP, against 1.13x and
-  3.7x on PySCF.
+  1.17x the gas-phase job on SvdW-DROP and 5.9x on rho-DROP, against 1.28x and
+  5.5x on PySCF.
   Offers all five 3c composites (wB97X-3c, r2SCAN-3c, B97-3c, PBEh-3c, HF-3c).
 - **OrbMol-v2 (refinement only).** The machine-learned potential from
   orb-models (Apache-2.0 code and weights), trained on gas-phase
@@ -488,9 +492,10 @@ The set of things that look weird and aren't. Read before "fixing":
   it: MOIST has no conda-forge or PyPI package, and the rattler-build recipe
   that builds it lives in psi4-swig-pcm (`packages/moist`), so that both
   repositories build MOIST from one recipe. `pixi.toml` pins the commit (`rev`,
-  the same as `psi4-swig-pcm`'s), which has the recipe's patch 0002: the
-  surface contractions the nonelectrostatic correction's gradients need on
-  DROP cavities. Change the recipe there, not here; its README
+  the same as `psi4-swig-pcm`'s), which has the recipe's patches 0002 and
+  0003: the surface contractions the nonelectrostatic correction's gradients
+  need on DROP cavities, and the PCM's apparent surface charges, which its
+  descriptors are built from. Change the recipe there, not here; its README
   ("The moist package") lists what it must keep for tautomator: the same
   Python; BLAS/LAPACK from the environment (MKL on linux-64, OpenBLAS on
   osx-arm64), by building against the netlib variants of `libblas`/`liblapack`;

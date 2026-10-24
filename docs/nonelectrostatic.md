@@ -427,9 +427,16 @@ finite-difference tests use MOIST's dense solver.
 
 **Descriptors.** `drop_descriptors` (and scoring with descriptors on a DROP
 model) gives the same `Descriptors`:
-per surface point the area, the solute's normal field, the PCM's charge recast
-as a field (its correlation with the normal field is 0.97 on formate) and the
-atom whose sphere the point was projected from. The file's settings record the
+per surface point the area, the solute's normal field, the PCM's apparent
+surface charge recast as a field (its correlation with the normal field is 0.97
+on formate) and the atom whose sphere the point was projected from. The charges
+are MOIST's apparent charges q (psi4-swig-pcm's `packages/moist` patch 0003
+publishes them), as PySCF's cavity uses its own: not the potential adjoint
+w_phi MOIST hands the host, which for IEF-PCM is the symmetrized adjoint and
+differs from q: by 0.05% RMS (0.15% at most) on SvdW-DROP for formate, and on
+PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
+methylammonium, water). C-PCM and COSMO are stationary, so there the two are
+equal. The file's settings name the charges (`charge_field`) and record the
 cavity, MOIST's grid and pruning level (`drop_nleb`, `drop_prune_level`) and
 the quadrature (`volume_rule`, `ray_rule`, `partition_a`).
 
@@ -483,6 +490,32 @@ the MNSol subset fit in core, against 96% at 194. With as many points as
 PySCF's Lebedev order 29 (302 here), DROP's worst ion is 0.12-0.14 kcal/mol
 against 0.19 on PySCF's cavity.
 
+**The gradients converge more slowly than the energies.** Formate
+(HF/def2-SVP, density fixed, the rough parameters above), the largest error of
+a Cartesian gradient component against nleb 2030, in Eh/bohr (on SvdW-DROP,
+2030, 3074 and 5810 agree with each other to 3e-5 for the PCM and 2e-5 for the
+correction, and 434 is as far from each of them):
+
+| nleb | PCM (SvdW / rho) | correction (SvdW / rho) |
+|---|---|---|
+| 194 | 5.0e-4 / 5.2e-4 | 1.0e-4 / 1.1e-4 |
+| **434** | 2.1e-4 / 2.1e-4 | 4.9e-5 / 6.1e-5 |
+| 590 | 1.7e-4 / 1.7e-4 | 4.0e-5 / 4.2e-5 |
+| 1202 | 6.3e-5 / 6.6e-5 | 2.8e-5 / 4.4e-5 |
+
+(The largest components: PCM 8e-2, correction 6e-3 Eh/bohr.) At 194 the PCM's
+error is above the GAU criterion both drivers' optimizers converge to (maximum
+force 4.5e-4 Eh/bohr); at 434 it is half of it. The correction's error is
+about a quarter of the PCM's up to 590, 0.8-1.0% of its largest component at
+434, and falls slowly: it halves from 194 to 434, then falls by under half
+more up to 1202 (2.8x the points). By term, at 434: the field term 1% of its
+largest component, the dispersion 5% and the exchange 20%, though these two
+are small here (1.5e-4 and 2e-4 Eh/bohr at most). The errors scale with the
+fitted parameters; at these rough ones the correction's is about a tenth of
+GAU's maximum force. (Against nleb 1202 instead, as a first check did, the
+correction's error looked flat at about 1% from 302 to 590: 1202's own error,
+3-4e-5, is close to theirs.)
+
 **What the relaxation is worth** on DROP, as on PySCF's cavity (rough
 parameters, exponent 2.5, c- and c+ set on each cavity to give acetate -15 and
 methylammonium -5 kcal/mol; wB97X-3c/vDZP), self-consistent minus post-SCF:
@@ -496,13 +529,15 @@ methylammonium -5 kcal/mol; wB97X-3c/vDZP), self-consistent minus post-SCF:
 
 (kcal/mol.) On rho-DROP the self-consistent density also moves the surface.
 
-**Cost.** Toluene at wB97X-3c/vDZP (8 threads): on SvdW-DROP an SCF iteration
-of the self-consistent correction adds 0.2 s (the normal field's map onto the
-density matrix is kept with the surface), and its gradient 2.3 s. On rho-DROP
-the surface moves every iteration, so every iteration also needs dG/d(s, n, a)
-(the field's gradient at the points and the density's Hessian on the rays):
-about 3 s, beside MOIST's own ~1.5 s. The post-SCF gradient took 15 s on
-SvdW-DROP and 39 s on rho-DROP (the numerical response).
+**Cost.** Toluene at wB97X-3c/vDZP (8 threads, nleb 434): on SvdW-DROP an SCF
+iteration of the self-consistent correction adds 0.3 s (the normal field's map
+onto the density matrix is kept with the surface), and its gradient 4.1 s,
+beside the PCM's own 0.4 s per iteration and 3.7 s. On rho-DROP the surface
+moves every iteration, so every iteration also needs dG/d(s, n, a) (the field's
+gradient at the points and the density's Hessian on the rays): 4.4 s, beside
+MOIST's own 1.5 s. The post-SCF gradient took 18 s on SvdW-DROP and 62 s on
+rho-DROP (the numerical response). At nleb 194 these were 0.2 s, 2.3 s, about
+3 s, 15 s and 39 s.
 
 ---
 
