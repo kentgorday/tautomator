@@ -73,11 +73,20 @@ from tautomator.batch import compound_dir_name
 from tautomator.config import DEFAULT_MEMORY_GB, PROTOCOLS, load_config
 from tautomator.nonelectrostatic import descriptor_file
 from tautomator.pipeline import run_pipeline
+from tautomator.scoring import check_descriptor_models
 
-# The model solvent runs minimize and score in, and the further models whose descriptors
-# scoring saves at the same geometries: the three cavities a fit can choose between.
-SOLVENT_MODEL = "IEFPCM/SvdW-DROP"
-DESCRIPTOR_MODELS = ("IEFPCM", "IEFPCM/rho-DROP")
+# The three cavities a fit can choose between, in IEF-PCM.  Solvent runs minimize and score
+# in SOLVENT_MODEL (--solvent-model) and by default save descriptors on the other two at
+# the same geometries.
+CAVITY_MODELS = ("IEFPCM/SvdW-DROP", "IEFPCM", "IEFPCM/rho-DROP")
+SOLVENT_MODEL = CAVITY_MODELS[0]
+
+
+def default_descriptor_models(solvent_model: str) -> list[str]:
+    """CAVITY_MODELS less the run's own model, whose descriptors scoring saves anyway."""
+    own = solvent_model.upper().replace("-", "")
+    return [m for m in CAVITY_MODELS if m.upper().replace("-", "") != own]
+
 
 # Medium -> the reference columns that need a run in it.
 MEDIA: dict[str, tuple[str, ...]] = {
@@ -169,12 +178,13 @@ def main() -> None:
     parser.add_argument(
         "--descriptor-models",
         nargs="*",
-        default=list(DESCRIPTOR_MODELS),
+        default=None,
         metavar="MODEL",
         help=(
             "further solvent models to save descriptors on, at the same geometries, one "
-            "more solvated single point per conformer each (default: "
-            f"{' '.join(DESCRIPTOR_MODELS)}; none: pass the flag alone)"
+            "more solvated single point per conformer each (default: those of "
+            f"{' '.join(CAVITY_MODELS)} other than --solvent-model; none: pass the flag "
+            "alone)"
         ),
     )
     parser.add_argument(
@@ -208,6 +218,15 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if args.descriptor_models is None:
+        args.descriptor_models = default_descriptor_models(args.solvent_model)
+    if args.descriptors:
+        # here rather than in every run, which would each record the same error
+        try:
+            check_descriptor_models(args.solvent_model, args.descriptor_models)
+        except ValueError as err:
+            print(f"Error: {err}", file=sys.stderr)
+            sys.exit(1)
     if not args.mnsol_set.exists():
         print(
             f"Error: {args.mnsol_set} not found. Run scripts/select_mnsol_set.py first.",

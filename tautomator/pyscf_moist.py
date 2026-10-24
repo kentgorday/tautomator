@@ -51,7 +51,9 @@ MoistHost and attach() rely on moist.pyscf internals (REPLACED).  attach() uses 
 the installed source of every one matches a MOIST release this module was checked against
 (CHECKED); otherwise it attaches MOIST's own host, at its own speed and with its own ECP
 refusal; it logs a warning saying so, and on a molecule with an ECP (every vDZP job) it
-raises instead of letting every conformer fail on MOIST's refusal.  To check a new MOIST:
+raises instead of letting every conformer fail on MOIST's refusal.  The nonelectrostatic
+correction on rho-DROP calls three of them (DENSITY_TERMS, through density_fock and
+density_gradient), which have no fallback: those refuse an unchecked MOIST.  To check a new MOIST:
 run tests/test_pyscf_moist.py with it, and if MoistHost still
 matches MOIST's host there, add the new fingerprints that test_replaced_functions_are_checked
 prints to CHECKED.
@@ -154,6 +156,8 @@ def _replaced() -> dict[str, Callable[..., Any]]:
         "PySCFHost._gradient_phi": mp.PySCFHost._gradient_phi,
         "PySCFHost._dphi_dxi": mp.PySCFHost._dphi_dxi,
         "PySCFHost._fock_lsf": mp.PySCFHost._fock_lsf,
+        "PySCFHost._gradient_lsf": mp.PySCFHost._gradient_lsf,
+        "PySCFHost._density_matrix": mp.PySCFHost._density_matrix,
         "PySCFHost._ao": mp.PySCFHost._ao,
         "_int3c1e": mp._int3c1e,
         "_component_index": mp._component_index,
@@ -184,6 +188,8 @@ CHECKED: dict[str, dict[str, str]] = {
     "PySCFHost._gradient_phi": {"a024fca9455e4579": "1.1.0a1"},
     "PySCFHost._dphi_dxi": {"f64b07703c729dc9": "1.1.0a1"},
     "PySCFHost._fock_lsf": {"b223cd2fc52047d6": "1.1.0a1"},
+    "PySCFHost._gradient_lsf": {"c5e1aa9273db56b5": "1.1.0a1"},
+    "PySCFHost._density_matrix": {"ae774fa2f988738b": "1.1.0a1"},
     "PySCFHost._ao": {"9091301fa653ad09": "1.1.0a1"},
     "_int3c1e": {"f2a42d138a3e0fde": "1.1.0a1"},
     "_component_index": {"5812d4d8640965b2": "1.1.0a1"},
@@ -226,6 +232,40 @@ def unchecked_functions() -> tuple[str, ...]:
             ", ".join(unchecked),
         )
     return unchecked
+
+
+# The REPLACED functions the nonelectrostatic correction calls on rho-DROP
+# (pyscf_nonelectrostatic_drop), through density_fock and density_gradient: MOIST's host
+# contracts the surface's density weights at the density it was given in host.dm.
+DENSITY_TERMS = ("PySCFHost._density_matrix", "PySCFHost._fock_lsf", "PySCFHost._gradient_lsf")
+
+
+def _check_density_terms() -> None:
+    """Raise unless the installed MOIST's DENSITY_TERMS are versions this module checked."""
+    unchecked = [name for name in DENSITY_TERMS if name in unchecked_functions()]
+    if unchecked:
+        import moist
+
+        raise RuntimeError(
+            f"MOIST {moist.__version__}: {', '.join(unchecked)} not among the versions the "
+            "nonelectrostatic correction on rho-DROP was checked against (pyscf_moist.CHECKED)"
+        )
+
+
+def density_fock(host: Any, dm: Array, coords: Array, weights: Any) -> Array:
+    """Density weights (MOIST's DensityResponse, from the cavity's contract_surface_density)
+    contracted into a Fock matrix at density dm: MOIST host's _fock_lsf."""
+    _check_density_terms()
+    host.dm = np.asarray(dm, dtype=np.float64)
+    return np.asarray(host._fock_lsf(coords, weights), dtype=np.float64)
+
+
+def density_gradient(host: Any, dm: Array, coords: Array, weights: Any) -> Array:
+    """Density weights contracted with d rho / dR at fixed dm, (natm, 3): MOIST host's
+    _gradient_lsf."""
+    _check_density_terms()
+    host.dm = np.asarray(dm, dtype=np.float64)
+    return np.asarray(host._gradient_lsf(coords, weights), dtype=np.float64)
 
 
 def _key(coords: Array, xi: Array) -> tuple[bytes, bytes]:

@@ -1202,6 +1202,20 @@ class TestDropSolventModels:
         with pytest.raises(ValueError, match="not available on the pyscf driver"):
             self._load(tmp_toml, model)
 
+    def test_a_driver_takes_only_its_own_drop_models(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # a DROP model is checked against the driver's set, as any other model is
+        import tautomator.config as config
+
+        moist_installed(True)
+        monkeypatch.setitem(config._SOLVENT_MODELS, "pyscf", set(config.PCM_METHODS))
+        with pytest.raises(ValueError, match="not available on the pyscf driver"):
+            self._load(tmp_toml, "IEFPCM/SvdW-DROP")
+
     def test_needs_moist(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:

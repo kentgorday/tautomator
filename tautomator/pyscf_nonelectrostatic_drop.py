@@ -361,14 +361,12 @@ class DropTerms:
         A, B = s.params.dispersion, s.params.exchange
         surf = self._surface(dm)
         rays, vol = surf.rays, self.volume
-        derivs = adjoint or gradient
-        if not derivs:
+        if not (adjoint or gradient):
             return self._evaluate_once(dm, surf, potential)
-        deriv = 2
 
-        # densities on both point sets
-        rho_v, grad_v, hess_v = _density(mol, dm, vol.coords, deriv)
-        rho_r, grad_r, hess_r = _density(mol, dm, rays.coords, deriv)
+        # densities on both point sets, with the Hessians the surface derivatives need
+        rho_v, grad_v, hess_v = _density(mol, dm, vol.coords, 2)
+        rho_r, grad_r, hess_r = _density(mol, dm, rays.coords, 2)
         u_v, ur_v, us_v = dispersion_density(
             rho_v, np.sum(grad_v**2, axis=0), s.solvent_rho, s.vv_c
         )
@@ -410,8 +408,6 @@ class DropTerms:
         if potential:
             assert V1 is not None and V2 is not None and V3 is not None
             out.V = V1 + V2 + V3
-        if not derivs:
-            return out
 
         assert hess_v is not None and hess_r is not None
         assert f_xyz is not None and f_n is not None and f_a is not None
@@ -537,9 +533,9 @@ class DropTerms:
         if dependent:
             weights = self._density_weights(out)
             if weights is not None:
-                host = self.solvation.host
-                host.dm = np.asarray(dm, dtype=np.float64)
-                V = V + host._fock_lsf(self.cavity.xyz, weights)
+                from tautomator import pyscf_moist
+
+                V = V + pyscf_moist.density_fock(self.solvation.host, dm, self.cavity.xyz, weights)
         return out.energies, V
 
     def gradient(self, dm: Array) -> Array:
@@ -553,9 +549,11 @@ class DropTerms:
         if self.density_dependent:
             weights = self._density_weights(out)
             if weights is not None:
-                host = self.solvation.host
-                host.dm = np.asarray(dm, dtype=np.float64)
-                g = g + host._gradient_lsf(self.cavity.xyz, weights)
+                from tautomator import pyscf_moist
+
+                g = g + pyscf_moist.density_gradient(
+                    self.solvation.host, dm, self.cavity.xyz, weights
+                )
         return np.asarray(g)
 
 

@@ -151,6 +151,20 @@ class TestReplacedFunctions:
             f"this file passes with this MOIST, add it to CHECKED: {installed_fingerprints()}"
         )
 
+    def test_density_terms_are_checked_functions(self) -> None:
+        # what the nonelectrostatic correction calls on rho-DROP's moving surface
+        assert set(pyscf_moist.DENSITY_TERMS) <= set(REPLACED)
+
+    @pytest.mark.parametrize("helper", ["density_fock", "density_gradient"])
+    def test_density_terms_refuse_an_unchecked_moist(
+        self, monkeypatch: pytest.MonkeyPatch, helper: str
+    ) -> None:
+        monkeypatch.setattr(
+            pyscf_moist, "unchecked_functions", lambda: ("PySCFHost._gradient_lsf",)
+        )
+        with pytest.raises(RuntimeError, match="_gradient_lsf not among"):
+            getattr(pyscf_moist, helper)(object(), np.eye(2), np.zeros((1, 3)), None)
+
     def test_unchecked_moist_gets_its_own_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(pyscf_moist, "unchecked_functions", lambda: ("PySCFHost.__init__",))
         mf = attach(

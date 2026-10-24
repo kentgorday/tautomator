@@ -774,13 +774,9 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
 
     if scoring.solvent_model is not None:
         allowed = _SOLVENT_MODELS[compute.driver]
-        model = scoring.solvent_model
-        known = (
-            drop_solvent_model(model) is not None
-            if "/" in model
-            else model.upper().replace("-", "") in {m.upper() for m in allowed}
-        )
-        if not known:
+        # the PCM part normalized as on PySCF's cavity, a DROP cavity as spelled
+        pcm, sep, cavity = scoring.solvent_model.partition("/")
+        if pcm.upper().replace("-", "") + sep + cavity not in allowed:
             raise ValueError(
                 f"[scoring] solvent_model = {scoring.solvent_model!r} is not available "
                 f"on the {compute.driver} driver (has: {_spelled(allowed)})."
