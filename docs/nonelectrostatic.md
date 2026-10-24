@@ -369,8 +369,10 @@ self-consistent model would have to be fitted self-consistently.
 
 The same three terms on the surface MOIST builds for its PCM
 (`solvent_model = "<model>/SvdW-DROP"` or `"<model>/rho-DROP"`; the README has
-the cavities), both models, with analytical gradients, on PySCF and Psi4. A
-DROP surface is a set of points s_i with outward normals n_i and areas a_i,
+the cavities), both models, with analytical gradients, on PySCF and Psi4. Both
+cavities are built on PySCF's cavity's spheres (`config.pcm_radii`), not on
+MOIST's own radii; every number below is on them. A DROP surface is a set of
+points s_i with outward normals n_i and areas a_i,
 smooth in the geometry and, for rho-DROP, in the density. Everything is
 written on those, and MOIST takes the derivatives with respect to them back to
 the nuclei and the density.
@@ -437,8 +439,10 @@ differs from q: by 0.05% RMS (0.15% at most) on SvdW-DROP for formate, and on
 PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
 methylammonium, water). C-PCM and COSMO are stationary, so there the two are
 equal. The file's settings name the charges (`charge_field`) and record the
-cavity, MOIST's grid and pruning level (`drop_nleb`, `drop_prune_level`) and
-the quadrature (`volume_rule`, `ray_rule`, `partition_a`).
+cavity, its spheres (`drop_radii`: PySCF's cavity's, with `pcm_hydrogen_radius`;
+a file without the key is from before, on MOIST's own CPCM radii), MOIST's grid
+and pruning level (`drop_nleb`, `drop_prune_level`) and the quadrature
+(`volume_rule`, `ray_rule`, `partition_a`).
 
 **How fine the grids need to be, in kcal/mol.** The same 42 solutes as on
 PySCF's cavity (25 neutrals, 17 ions; wB97X-3c/vDZP, density fixed), rough

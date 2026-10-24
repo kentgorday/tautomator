@@ -47,6 +47,9 @@ def _quadrature_settings(solvent_model: str | None) -> dict[str, object]:
 
     return {
         "cavity": drop[1],
+        # PySCF's cavity's spheres (config.pcm_radii, hydrogen at pcm_hydrogen_radius); a
+        # file without this key is from before, on MOIST's own CPCM radii
+        "drop_radii": "modified Bondi x 1.2",
         "drop_nleb": DROP_NLEB,
         "drop_prune_level": DROP_PRUNE_LEVEL,
         "volume_rule": list(VOLUME_RULE),

@@ -193,9 +193,9 @@ score. All three drivers implement the same three operations (`single_point`,
   The same PCM models also run on MOIST's DROP cavities
   (`tautomator/pyscf_moist.py`; MOIST is in the default environment):
   `solvent_model = "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and
-  cavity `SvdW-DROP` (a smooth solvent-excluded-like surface over MOIST's CPCM
-  radii) or `rho-DROP` (the electron isodensity surface, rho_iso = 1e-3
-  e/bohr³, which follows the density through the SCF), e.g.
+  cavity `SvdW-DROP` (a smooth solvent-excluded-like surface over the spheres
+  of PySCF's cavity) or `rho-DROP` (the electron isodensity surface, rho_iso =
+  1e-3 e/bohr³, which follows the density through the SCF), e.g.
   `"IEFPCM/SvdW-DROP"`, the default solvent model. The model is spelled as for
   PySCF's cavity (`IEF-PCM` works too); the cavity only exactly so, with no
   other names. Both drivers build them with 434 Lebedev points per sphere and
@@ -203,19 +203,25 @@ score. All three drivers implement the same three operations (`single_point`,
   default, 194, left the PCM energy of small anions up to 0.28 kcal/mol off,
   434 keeps 42 test solutes within 0.1 kcal/mol (docs/nonelectrostatic.md, "On
   MOIST's DROP cavities"). The psi4 driver runs them too (see below). Water at
-  wB97X-3c/vDZP (MMFF geometry): −7.1 kcal/mol on SvdW-DROP and −7.3 on
+  wB97X-3c/vDZP (MMFF geometry): −6.4 kcal/mol on SvdW-DROP and −7.3 on
   rho-DROP, against −6.6 on PySCF's cavity. Both have analytical gradients, so
   refinement minimizes in them, and both take vDZP's ECPs, which MOIST's own
   PySCF code refuses. On PySCF they have no Hessian (`rrho = "refinement"` with
   `solvation = "optimize"` is refused; the psi4 driver has one). The
   nonelectrostatic correction runs on them too, with its gradients, on both
   drivers (docs/nonelectrostatic.md, "On MOIST's DROP cavities"), and PySCF
-  scoring saves its descriptors there. They ignore `pcm_hydrogen_radius`, a
-  setting of the switching/Gaussian cavity (so a value other than 1.1 is
-  refused). On PySCF, MOIST solves the PCM and tautomator's
-  own code supplies its integrals, as FastPCM keeps them, and in bounded
-  memory. An IEF-PCM energy and gradient on acetaminophen (wB97X/def2-SVP, 4
-  threads, nleb 434), against the gas-phase job:
+  scoring saves its descriptors there. Both cavities are built on PySCF's
+  cavity's spheres (modified Bondi × 1.2, `config.pcm_radii`), never on MOIST's
+  own radius sets, which are up to 13% smaller on the p-block elements and a
+  third off on the alkali metals, Cu and Zn (on MOIST's set, formate's
+  SvdW-DROP solvation energy in water is 3.6 kcal/mol more negative,
+  HF/def2-SVP). So `pcm_hydrogen_radius` sizes SvdW-DROP's hydrogens as it
+  does PySCF's; rho-DROP refuses a value other than 1.1, as its surface is the
+  density's contour and the radii only place its points (they move its
+  solvation energies by under 0.04 kcal/mol). On PySCF, MOIST solves the PCM
+  and tautomator's own code supplies its integrals, as FastPCM keeps them, and
+  in bounded memory. An IEF-PCM energy and gradient on acetaminophen
+  (wB97X/def2-SVP, 4 threads, nleb 434), against the gas-phase job:
 
   | | tautomator | MOIST's own PySCF code |
   |---|---|---|
@@ -252,21 +258,21 @@ score. All three drivers implement the same three operations (`single_point`,
   6 GB as at 12 (that one measured on Accelerate's BLAS).
 
   The DROP solvent models (`"<model>/<cavity>"`, as for PySCF above) run
-  through psi4-swig-pcm's MOIST host, with the same cavities, grid and pruning
-  as on PySCF. The `psi4` environment has MOIST for them, as the default
-  environment does (see "Non-obvious design decisions"). A run on a DROP model
-  first checks that its Psi4 can import MOIST (a `psi4` environment installed
-  before it had MOIST cannot), so a missing one stops the run instead of
-  failing every conformer. Psi4 takes its frequencies as finite differences of
-  the analytical gradients, so on this driver `rrho = "refinement"` works in
-  MOIST's PCM too (at ~6N gradients per Hessian, as in any Psi4 PCM).
-  `pcm_hydrogen_radius` is refused as on PySCF. Solvation energies match
-  PySCF's on the same model to <1e-8 kcal/mol (formate, HF/def2-SVP, SvdW- and
-  rho-DROP), and to ~3e-6 kcal/mol with vDZP's ECPs, whose integrals the two
-  programs compute differently (their gas-phase energies differ by up to 2e-4
-  kcal/mol). A wB97X-3c/vDZP single point on acetaminophen (4 threads) costs
-  1.17x the gas-phase job on SvdW-DROP and 5.9x on rho-DROP, against 1.28x and
-  5.5x on PySCF.
+  through psi4-swig-pcm's MOIST host, with the same cavities, radii, grid and
+  pruning as on PySCF. The `psi4` environment has MOIST for them, as the
+  default environment does (see "Non-obvious design decisions"). A run on a
+  DROP model first checks that its Psi4 can import MOIST (a `psi4` environment
+  installed before it had MOIST cannot), so a missing one stops the run
+  instead of failing every conformer. Psi4 takes its frequencies as finite
+  differences of the analytical gradients, so on this driver `rrho =
+  "refinement"` works in MOIST's PCM too (at ~6N gradients per Hessian, as in
+  any Psi4 PCM). `pcm_hydrogen_radius` works as on PySCF (on SvdW-DROP).
+  Solvation energies match PySCF's on the same model to <1e-8 kcal/mol
+  (formate, HF/def2-SVP, SvdW- and rho-DROP), and to ~3e-6 kcal/mol with
+  vDZP's ECPs, whose integrals the two programs compute differently (their
+  gas-phase energies differ by up to 2e-4 kcal/mol). A wB97X-3c/vDZP single
+  point on acetaminophen (4 threads) costs 1.17x the gas-phase job on
+  SvdW-DROP and 5.9x on rho-DROP, against 1.28x and 5.5x on PySCF.
   Offers all five 3c composites (wB97X-3c, r2SCAN-3c, B97-3c, PBEh-3c, HF-3c).
 - **OrbMol-v2 (refinement only).** The machine-learned potential from
   orb-models (Apache-2.0 code and weights), trained on gas-phase
@@ -290,7 +296,11 @@ for the VV10 NLC grid. These aren't user-tunable on purpose.
 One TOML file, five sections (`[molecule]`, `[sampling]`, `[refinement]`,
 `[scoring]`, `[compute]`), loaded by `config.load_config`. The config says
 which *physics* goes into each energy term; the runners decide how to get it
-(analytic vs finite-difference Hessians, grids, cavity construction).
+(analytic vs finite-difference Hessians, grids, cavity construction). A key that
+is not a setting of its section is an error, with the setting it most likely
+meant or the section it belongs in, rather than ignored: a misspelled or
+retired setting would otherwise leave the run on its default without a word.
+The deprecated spellings are still accepted, with a warning.
 
 A top-level `protocol` key fills in every level of theory and window at once;
 anything written in the file wins over the preset. With gas-phase scoring
@@ -594,6 +604,23 @@ The set of things that look weird and aren't. Read before "fixing":
   call it. conda-forge does not pair Accelerate's BLAS with another LAPACK.
   BLIS is not an option either (PySCF gets a NaN Fock matrix), nor pthreads
   OpenBLAS (pytorch excludes it).
+  Apple has fixed this in macOS 27.2, so Accelerate can come back once 27.2
+  is released. The bug is [scipy/scipy#26145](https://github.com/scipy/scipy/issues/26145)
+  (Apple's FB24671487): upper-triangle `dpotrf` only, segfaults at orders
+  2048 and 3000 under Guard Malloc, on an M4 Pro with conda-forge's
+  `*_newaccelerate` build on macOS 27.0. Apple's fix was confirmed there in
+  27.2 beta 3 (26B5101f) on Oct 13, 2026. That issue tested only the newer
+  interface and reports only crashes, not wrong factors. So before switching
+  back: rerun the Guard Malloc loop and check the factor
+  (`L @ L.T` against the input) for orders 1400-5600 through both
+  interfaces on 27.2; restore the two selectors `efe4782` removed, with their
+  notes (`libblas = { version = "*", build = "*_newaccelerate" }` under
+  `[target.osx-arm64.dependencies]` and
+  `[feature.psi4.target.osx-arm64.dependencies]`), and run
+  `pixi update --platform osx-arm64 libblas libcblas liblapack`; and put a
+  macOS 27.2 floor on the platform (`{ name = ..., platform = "osx-arm64",
+  macos = "27.2" }`, as the 15.5 floor was before `efe4782`), so that no
+  older macOS gets the heap corruption back.
 - **D4 composite Hessians fall up to wB97X-V** (`_HESSIAN_FALLBACK`). PySCF
   has no analytical D4 Hessian, but VV10 *is* analytical. Vibrational
   frequencies are insensitive to the dispersion correction, so this is a free

@@ -27,12 +27,16 @@ Scoring always recomputes electronic + solvation and carries RRHO over.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
+
+import numpy as np
+from numpy.typing import NDArray
 
 # Per-QM-job memory ceiling, shared by both backends so a given config means
 # the same thing on either one (their native defaults are Psi4's 500 MiB and
@@ -163,11 +167,12 @@ PCM_METHODS: dict[str, str] = {
 
 # MOIST's DROP cavities, for the same PCM models: a solvent model "<model>/<cavity>",
 # e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth solvent-excluded-like surface over
-# MOIST's CPCM radii, rho-DROP the electron isodensity surface (rho_iso = 1e-3
-# e/bohr^3), which follows the density through the SCF.  On the pyscf driver they run
-# through tautomator.pyscf_moist, on the psi4 driver through psi4-swig-pcm's MOIST host;
-# both the default and the psi4 environment have MOIST.  A cavity has one name, written
-# exactly as here: no other case, spelling or alias is taken for it.
+# the same spheres as PySCF's cavity (pcm_radii), rho-DROP the electron isodensity
+# surface (rho_iso = 1e-3 e/bohr^3), which follows the density through the SCF.  On the
+# pyscf driver they run through tautomator.pyscf_moist, on the psi4 driver through
+# psi4-swig-pcm's MOIST host; both the default and the psi4 environment have MOIST.  A
+# cavity has one name, written exactly as here: no other case, spelling or alias is taken
+# for it.
 DROP_CAVITIES: tuple[str, ...] = ("SvdW-DROP", "rho-DROP")
 
 # The MOIST classes both drivers build a DROP model from: each cavity's level-set function
@@ -197,6 +202,29 @@ DROP_NLEB = 434
 #: scales with the points.  Level 5 (1e-4 to 1e-2) is as harmless up to nleb 302, but at 590
 #: it moves the nonelectrostatic correction by up to 0.09 kcal/mol.
 DROP_PRUNE_LEVEL = 4
+
+#: PySCF's PCM vdw_scale: every cavity's spheres are the modified Bondi radii times this.
+PCM_VDW_SCALE = 1.2
+
+
+def pcm_radii(hydrogen_radius: float = 1.1) -> NDArray[np.float64]:
+    """The PCM spheres' radii (bohr) by atomic number, on every cavity tautomator builds.
+
+    PySCF's own cavity's: its modified Bondi radii (pyscf.solvent.pcm.modified_Bondi,
+    1.999999 A for elements without a Bondi value) with hydrogen at hydrogen_radius
+    (Angstrom), times PCM_VDW_SCALE, with no probe.  The DROP cavities take this table
+    rather than MOIST's own radii, which are up to 13% smaller on the p-block elements
+    (O 1.72 A against 1.82, Si 2.20 against 2.52), a third smaller on the alkali metals and
+    a third larger on Cu and Zn: SvdW-DROP's IEF-PCM solvation energy of formate is 3.6
+    kcal/mol less negative on this table (HF/def2-SVP).  psi4-swig-pcm's
+    modified_bondi_radii is the same table, which psi4_runner gives both of its cavities.
+    """
+    import pyscf.solvent.pcm as pcm
+    from pyscf.data.radii import BOHR
+
+    radii = np.array(pcm.modified_Bondi, dtype=np.float64)
+    radii[1] = hydrogen_radius / BOHR
+    return PCM_VDW_SCALE * radii
 
 
 def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
@@ -520,7 +548,12 @@ _DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM/SvdW-DROP", "psi4": "IEFPCM/SvdW-DROP
 # TOML loading + validation
 # ---------------------------------------------------------------------------
 def load_config(path: Path) -> PkaConfig:
-    """Load and validate a pKa workflow config from a TOML file."""
+    """Load and validate a pKa workflow config from a TOML file.
+
+    Every key must be a setting of its section (or a deprecated spelling of one): an
+    unknown key is an error, not ignored, so that a misspelled or retired setting cannot
+    leave a run on its default unnoticed.
+    """
     raw = tomllib.loads(path.read_text())
     protocol = raw.get("protocol")
     if protocol is not None and protocol not in PROTOCOLS:
@@ -545,8 +578,19 @@ def load_config(path: Path) -> PkaConfig:
     mol_raw = dict(mol_raw)
 
     ref_raw, score_raw, compute_raw = section("refinement"), section("scoring"), section("compute")
+    samp_raw = section("sampling")
     _migrate(ref_raw, score_raw, compute_raw, mol_raw)
     _fit_preset_solvation(ref_raw, raw.get("refinement", {}), score_raw)
+    _check_settings(
+        raw,
+        {
+            "molecule": mol_raw,
+            "sampling": samp_raw,
+            "refinement": ref_raw,
+            "scoring": score_raw,
+            "compute": compute_raw,
+        },
+    )
 
     molecule = MoleculeConfig(
         smiles=mol_raw["smiles"],
@@ -577,7 +621,6 @@ def load_config(path: Path) -> PkaConfig:
     if compute.driver not in DRIVERS:
         raise ValueError(f"Unknown driver: {compute.driver!r} (must be 'psi4' or 'pyscf')")
 
-    samp_raw = section("sampling")
     sampling = SamplingConfig(
         approach=samp_raw.get("approach", "rdkit_first"),
         ewin=samp_raw.get("ewin", 10.0),
@@ -777,15 +820,17 @@ def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -
             "not have: the default pixi environment has it (`pixi install`; the first "
             "install compiles MOIST)."
         )
+    drop = drop_solvent_model(model)
     for name, radius in (
         ("[scoring]", scoring.pcm_hydrogen_radius),
         ("[refinement]", ref.pcm_hydrogen_radius),
     ):
-        if radius != 1.1:
+        if drop is not None and drop[1] == "rho-DROP" and radius != 1.1:
             raise ValueError(
-                f"{name} pcm_hydrogen_radius = {radius} sets the hydrogen radius of the "
-                f"switching/Gaussian PCM cavity; solvent_model = {model!r} builds MOIST's "
-                "cavity, with MOIST's radii. Remove it."
+                f"{name} pcm_hydrogen_radius = {radius} would change nothing on "
+                f"solvent_model = {model!r}: rho-DROP's surface is the density's contour, "
+                "and the radii only place its points. Remove it, or use SvdW-DROP or PySCF's "
+                "cavity, whose spheres it sizes."
             )
     # Psi4 takes its frequencies as finite differences of analytical gradients, which
     # MOIST has; PySCF's are analytical Hessians, which MOIST does not have.
@@ -923,6 +968,54 @@ def _warn_no_diffuse(scoring: ScoringConfig) -> None:
             "zwitterions and 0.7-0.9 for ammonium ions (0.5-2.0 pKa), and def2-SVP "
             "above def2-SVPD by 4-16. Use an augmented set such as def2-TZVPPD."
         )
+
+
+# The settings a config file may give, by section: each section's fields, less those the
+# loader derives itself.  _check_settings refuses anything else.
+_SETTINGS: dict[str, frozenset[str]] = {
+    name: frozenset(f.name for f in fields(cls)) - derived
+    for name, cls, derived in (
+        ("molecule", MoleculeConfig, frozenset()),
+        ("sampling", SamplingConfig, frozenset()),
+        ("refinement", RefinementConfig, frozenset({"engine"})),
+        ("scoring", ScoringConfig, frozenset()),
+        ("compute", ComputeConfig, frozenset()),
+    )
+}
+
+
+def _check_settings(raw: dict[str, Any], sections: dict[str, dict[str, Any]]) -> None:
+    """Refuse every key the loader would not read, saying where it belongs when it can.
+
+    ``raw`` is the file; ``sections`` its sections as the loader reads them (the preset's
+    settings and the file's), after _migrate has taken the deprecated spellings out.
+    """
+    top = frozenset({"protocol", *_SETTINGS})
+    unknown = [f"{key!r} at the top level{_hint(key, top)}" for key in raw if key not in top]
+    for name, section in sections.items():
+        unknown += [
+            f"[{name}] {key}{_hint(key, _SETTINGS[name], name)}"
+            for key in section
+            if key not in _SETTINGS[name]
+        ]
+    if unknown:
+        raise ValueError(f"Unknown config setting(s): {'; '.join(unknown)}")
+
+
+def _hint(key: str, allowed: frozenset[str], section: str | None = None) -> str:
+    """Where a misplaced or misspelled key probably belongs, in parentheses, or ''."""
+    elsewhere = [
+        f"[{name}]" for name, keys in _SETTINGS.items() if name != section and key in keys
+    ]
+    if elsewhere:
+        where = (
+            elsewhere[0]
+            if len(elsewhere) == 1
+            else f"{', '.join(elsewhere[:-1])} or {elsewhere[-1]}"
+        )
+        return f" (a setting of {where})"
+    close = difflib.get_close_matches(key, sorted(allowed), n=1)
+    return f" (did you mean {close[0]!r}?)" if close else ""
 
 
 def _fit_preset_solvation(

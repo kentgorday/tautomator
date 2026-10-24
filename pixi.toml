@@ -85,7 +85,10 @@ numba = ">=0.68"
 # orders of about 1450-5500 (macOS 27.0.1, in both of its LAPACK interfaces), and the
 # heap it corrupts crashes Python later; through the newer interface it also returns
 # wrong factors.  psi4-swig-pcm's cavity check and PySCF's density fitting call it
-# (README, "Non-obvious design decisions").
+# (README, "Non-obvious design decisions").  Apple has fixed it in macOS 27.2
+# (scipy/scipy#26145, confirmed in 27.2 beta 3), so Accelerate can come back once
+# 27.2 is released, with a 27.2 floor on the platform; the README lists what to
+# check first.
 
 [pypi-dependencies]
 tautomator = { path = ".", editable = true }

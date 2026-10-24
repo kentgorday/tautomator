@@ -8,11 +8,14 @@ import pytest
 
 from tautomator import xtb_runner
 from tautomator.config import (
+    _SETTINGS,
+    PROTOCOLS,
     SOLVENT_DIELECTRIC,
     PkaConfig,
     _has_diffuse,
     alpb_name,
     load_config,
+    pcm_radii,
     solvent_electron_density,
 )
 from tautomator.types import Geometry
@@ -1207,15 +1210,27 @@ class TestDropSolventModels:
             self._load(tmp_toml, "IEFPCM/SvdW-DROP")
 
     @pytest.mark.parametrize("section", ["scoring", "refinement"])
-    def test_hydrogen_radius_is_pyscf_cavitys(
+    def test_hydrogen_radius_sizes_svdw_drops_spheres(
+        self,
+        tmp_toml: Callable[[str], Path],
+        moist_installed: Callable[[bool], None],
+        section: str,
+    ) -> None:
+        # SvdW-DROP is built on PySCF's cavity's spheres (config.pcm_radii)
+        moist_installed(True)
+        config = self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+        assert getattr(config, section).pcm_hydrogen_radius == 1.2
+
+    @pytest.mark.parametrize("section", ["scoring", "refinement"])
+    def test_hydrogen_radius_refused_on_rho_drop(
         self,
         tmp_toml: Callable[[str], Path],
         moist_installed: Callable[[bool], None],
         section: str,
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+        with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius .* nothing"):
+            self._load(tmp_toml, "IEFPCM/rho-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
 
     def test_no_hessian_in_solvent(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
@@ -1230,3 +1245,85 @@ class TestDropSolventModels:
             refinement='rrho = "refinement"\nsolvation = "single_point"',
         )
         assert config.refinement.rrho == "refinement"
+
+
+class TestUnknownSettings:
+    """A key the loader does not read is an error, not a silent default."""
+
+    def _load(self, tmp_toml: Callable[[str], Path], text: str) -> PkaConfig:
+        return load_config(tmp_toml(f'[molecule]\nsmiles = "CCO"\n{text}\n'))
+
+    @pytest.mark.parametrize(
+        ("section", "key", "meant"),
+        [
+            ("molecule", "solvnet", "solvent"),
+            ("sampling", "ewni", "ewin"),
+            ("refinement", "rrhoo", "rrho"),
+            ("scoring", "solvent_modle", "solvent_model"),
+            ("compute", "memroy_gb", "memory_gb"),
+        ],
+    )
+    def test_misspelled_setting(
+        self, tmp_toml: Callable[[str], Path], section: str, key: str, meant: str
+    ) -> None:
+        text = f'{key} = "x"' if section == "molecule" else f'[{section}]\n{key} = "x"'
+        with pytest.raises(ValueError, match=rf"\[{section}\] {key} \(did you mean '{meant}'\?\)"):
+            self._load(tmp_toml, text)
+
+    @pytest.mark.parametrize(
+        ("text", "where"),
+        [
+            ("[scoring]\nthreads = 4", r"\[scoring\] threads \(a setting of \[compute\]\)"),
+            ("[compute]\newin = 5.0", r"a setting of \[sampling\], \[refinement\] or \[scoring\]"),
+        ],
+    )
+    def test_setting_of_another_section(
+        self, tmp_toml: Callable[[str], Path], text: str, where: str
+    ) -> None:
+        with pytest.raises(ValueError, match=where):
+            self._load(tmp_toml, text)
+
+    def test_top_level(self, tmp_toml: Callable[[str], Path]) -> None:
+        # a section's setting outside its section, and a misspelled section
+        with pytest.raises(ValueError) as err:
+            load_config(
+                tmp_toml('memory_gb = 4\n[molecule]\nsmiles = "CCO"\n[scorng]\newin = 5.0\n')
+            )
+        message = str(err.value)
+        assert "'memory_gb' at the top level (a setting of [compute])" in message
+        assert "'scorng' at the top level (did you mean 'scoring'?)" in message
+
+    def test_derived_field_is_not_a_setting(self, tmp_toml: Callable[[str], Path]) -> None:
+        # the method decides the refinement engine
+        with pytest.raises(ValueError, match=r"\[refinement\] engine"):
+            self._load(tmp_toml, '[refinement]\nengine = "orbmol"')
+
+    def test_removed_descriptor_switch_is_refused(self, tmp_toml: Callable[[str], Path]) -> None:
+        # run_pipeline(descriptors=...) asks for them now; the old key must not pass silently
+        with pytest.raises(ValueError, match=r"\[scoring\] nonelectrostatic_descriptors"):
+            self._load(tmp_toml, "[scoring]\nnonelectrostatic_descriptors = true")
+
+    def test_no_hint_without_a_likely_setting(self, tmp_toml: Callable[[str], Path]) -> None:
+        with pytest.raises(ValueError, match=r"\[scoring\] zzz$"):
+            self._load(tmp_toml, "[scoring]\nzzz = 1")
+
+    @pytest.mark.parametrize("protocol", sorted(PROTOCOLS))
+    def test_presets_give_only_settings(self, protocol: str) -> None:
+        for section, settings in PROTOCOLS[protocol].items():
+            assert set(settings) <= _SETTINGS[section], (protocol, section)
+
+
+class TestPcmRadii:
+    """The one table of sphere radii every cavity is built on (both drivers, all cavities)."""
+
+    def test_is_pyscfs_own_default(self) -> None:
+        import pyscf.solvent.pcm as pcm
+
+        np.testing.assert_array_equal(pcm_radii(), 1.2 * pcm.modified_Bondi)
+
+    def test_hydrogen_radius_moves_hydrogen_alone(self) -> None:
+        from pyscf.data.radii import BOHR
+
+        default, wider = pcm_radii(1.1), pcm_radii(1.3)
+        assert wider[1] == pytest.approx(1.2 * 1.3 / BOHR)
+        np.testing.assert_array_equal(np.delete(default, 1), np.delete(wider, 1))

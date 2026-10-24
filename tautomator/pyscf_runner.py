@@ -29,6 +29,7 @@ from tautomator.config import (
     PCM_METHODS,
     PCM_SWITCHING,
     drop_solvent_model,
+    pcm_radii,
     solvent_dielectric,
 )
 from tautomator.geometric_logging import geometric_quiet
@@ -519,12 +520,14 @@ def _build_mf(
         solvent_model_upper = solvent_model.upper().replace("-", "")
         drop = drop_solvent_model(solvent_model)
         if drop is not None:
-            if pcm_hydrogen_radius != 1.1:
+            if drop[1] == "rho-DROP" and pcm_hydrogen_radius != 1.1:
                 raise ValueError(
-                    f"pcm_hydrogen_radius = {pcm_hydrogen_radius} applies to PySCF's own PCM "
-                    f"cavity, not to {solvent_model!r} (MOIST's radii)"
+                    f"pcm_hydrogen_radius = {pcm_hydrogen_radius} would change nothing on "
+                    f"{solvent_model!r}: the radii only place the isodensity surface's points"
                 )
-            mf = _attach_drop(mf, drop[0], drop[1], solvent_dielectric(solvent), threads)
+            mf = _attach_drop(
+                mf, drop[0], drop[1], solvent_dielectric(solvent), threads, pcm_hydrogen_radius
+            )
         elif solvent_model_upper == "SMD":
             mf = pyscf_solvent.SMD(mf)
             mf.with_solvent.solvent = solvent
@@ -532,17 +535,11 @@ def _build_mf(
             mf = pyscf_solvent.PCM(mf)
             mf.with_solvent.method = PCM_METHODS[solvent_model_upper]
             mf.with_solvent.eps = solvent_dielectric(solvent)
-            # Cavity radii: PySCF's default is modified_Bondi (H=1.10); override
-            # the hydrogen radius with the user value.  radii_table holds the
-            # final (already vdw_scale-scaled) radii, so replicate that formula.
-            # With pcm_hydrogen_radius=1.10 this reproduces the default exactly.
-            import pyscf.solvent.pcm as _pcm
-            from pyscf.data import radii as _radii
-
+            # Cavity radii: the final sphere radii, the same table the DROP cavities
+            # take (config.pcm_radii); with pcm_hydrogen_radius=1.10 it is PySCF's
+            # default exactly (vdw_scale 1.2 x modified Bondi, no probe).
             ws = mf.with_solvent
-            rad = _pcm.modified_Bondi.copy()
-            rad[1] = pcm_hydrogen_radius / _radii.BOHR
-            ws.radii_table = ws.vdw_scale * rad + ws.r_probe / _radii.BOHR
+            ws.radii_table = pcm_radii(pcm_hydrogen_radius)
             # Psi4 builds the same surface (psi4_runner._pcm_block).  A PySCF without the
             # attribute would ignore it and build SWIG's.
             if not hasattr(ws, "surface_discretization_method"):
@@ -573,8 +570,11 @@ def _build_mf(
     return mol, mf
 
 
-def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int) -> Any:
-    """``mf`` in a PCM model on one of MOIST's DROP cavities (tautomator.pyscf_moist).
+def _attach_drop(
+    mf: Any, pcm_method: str, cavity: str, eps: float, threads: int, hydrogen_radius: float
+) -> Any:
+    """``mf`` in a PCM model on one of MOIST's DROP cavities (tautomator.pyscf_moist), on
+    the spheres of PySCF's cavity (config.pcm_radii, hydrogen at hydrogen_radius).
 
     After density fitting, like PySCF's own solvent wrappers: MOIST's wrapper rebuilds a
     density-fitted mean field without MoistHost.
@@ -590,7 +590,12 @@ def _attach_drop(mf: Any, pcm_method: str, cavity: str, eps: float, threads: int
         ) from err
     component = getattr(moist, DROP_COMPONENTS[pcm_method])(eps)
     context = moist.Context(nthreads=threads, verbosity=0)
-    return attach(mf, cavity=drop_cavity(cavity), components=[component], context=context)
+    return attach(
+        mf,
+        cavity=drop_cavity(cavity, hydrogen_radius=hydrogen_radius),
+        components=[component],
+        context=context,
+    )
 
 
 def _run_scf_robust(mf: Any) -> float:
