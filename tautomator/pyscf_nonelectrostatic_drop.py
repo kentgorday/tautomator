@@ -764,7 +764,7 @@ def drop_descriptors(
     publishes).  They are not the potential adjoint w_phi MOIST hands the host: for C-PCM and
     COSMO the two are the same, but for IEF-PCM w_phi is the symmetrized adjoint (the
     symmetric part of the response matrix applied to the potential), which differs from q by
-    0.05% RMS (0.15% at most) on SvdW-DROP for formate; PySCF's own q and q_sym differ by
+    0.04% RMS (0.1% at most) on SvdW-DROP for formate; PySCF's own q and q_sym differ by
     0.3-1.3% RMS.
     """
     from tautomator.nonelectrostatic import Descriptors

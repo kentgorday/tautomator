@@ -435,7 +435,7 @@ on formate) and the atom whose sphere the point was projected from. The charges
 are MOIST's apparent charges q (psi4-swig-pcm's `packages/moist` patch 0003
 publishes them), as PySCF's cavity uses its own: not the potential adjoint
 w_phi MOIST hands the host, which for IEF-PCM is the symmetrized adjoint and
-differs from q: by 0.05% RMS (0.15% at most) on SvdW-DROP for formate, and on
+differs from q: by 0.04% RMS (0.1% at most) on SvdW-DROP for formate, and on
 PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
 methylammonium, water). C-PCM and COSMO are stationary, so there the two are
 equal. The file's settings name the charges (`charge_field`) and record the
@@ -448,26 +448,26 @@ and pruning level (`drop_nleb`, `drop_prune_level`) and the quadrature
 PySCF's cavity (25 neutrals, 17 ions; wB97X-3c/vDZP, density fixed), rough
 parameters A = -0.0036 and B = 0.0105, and field coefficients giving acetate's
 negative-field term -15 and methylammonium's positive-field term -5 kcal/mol
-at n = 3 (G spans -41 to 0 kcal/mol on SvdW-DROP, -36 to 0 on rho-DROP). Each
+at n = 3 (G spans -40 to 0 kcal/mol on SvdW-DROP, -36 to 0 on rho-DROP). Each
 grid varied alone against references (all-space (59, 40, 1.5), rays (40, 1.0),
 MOIST's nleb 1202), max error / RMS:
 
 | grid | SvdW-DROP | rho-DROP |
 |---|---|---|
-| all-space (17, 12, 1.5) | 0.093 / 0.040 | 0.093 / 0.040 |
-| all-space (23, 12, 1.5) | 0.077 / 0.038 | 0.077 / 0.038 |
+| all-space (17, 12, 1.5) | 0.092 / 0.040 | 0.093 / 0.040 |
+| all-space (23, 12, 1.5) | 0.076 / 0.037 | 0.077 / 0.038 |
 | **all-space (23, 16, 1.5) (default)** | 0.014 / 0.005 | 0.014 / 0.005 |
 | all-space (35, 24, 1.5) | 0.013 / 0.003 | 0.013 / 0.003 |
 | rays (8, 1.0) | 0.005 / 0.003 | 0.004 / 0.003 |
 | **rays (12, 1.0) (default)** | 0.001 / 0.000 | 0.001 / 0.000 |
-| MOIST's surface, nleb 194 (MOIST's default) | 0.072 / 0.023 | 0.062 / 0.022 |
-| MOIST's surface, nleb 302 | 0.041 / 0.013 | 0.037 / 0.013 |
-| MOIST's surface, nleb 590 | 0.021 / 0.006 | 0.020 / 0.006 |
+| MOIST's surface, nleb 194 (MOIST's default) | 0.065 / 0.021 | 0.062 / 0.022 |
+| MOIST's surface, nleb 302 | 0.055 / 0.013 | 0.037 / 0.013 |
+| MOIST's surface, nleb 590 | 0.011 / 0.005 | 0.020 / 0.006 |
 
 (kcal/mol.  At n = 4 the same, but for MOIST's surface at nleb 194 on rho-DROP:
 0.080 for methoxide.  The all-space grid's error is the dispersion integrand's
-over all space, which hardly depends on the cavity.) The all-space grid needs its 16 radial nodes;
-with them, MOIST's own surface is the largest error, as on PySCF's cavity, and
+over all space, which hardly depends on the cavity.) The all-space grid needs
+its 16 radial nodes; with them, MOIST's own surface is the largest error, as on PySCF's cavity, and
 it falls with nleb, which also refines the PCM.
 
 **MOIST's surface resolution**, which sets the PCM's own accuracy as much as
@@ -478,47 +478,49 @@ error with the rough parameters above):
 
 | nleb / pruning | points | SvdW-DROP | rho-DROP | within (SvdW / rho) | G worst |
 |---|---|---|---|---|---|
-| 194 / 4 (MOIST's default) | 1.00x | 0.28 / 0.08 | 0.25 / 0.08 | 26 / 27 | 0.072 / 0.062 |
-| 302 / 4 | 1.45x | 0.14 / 0.04 | 0.12 / 0.03 | 34 / 37 | 0.041 / 0.037 |
-| 350 / 4 | 1.63x | 0.14 / 0.04 | 0.12 / 0.03 | 38 / 40 | 0.047 / 0.044 |
-| **434 / 4 (config.DROP_NLEB, DROP_PRUNE_LEVEL)** | 1.97x | 0.086 / 0.023 | 0.073 / 0.022 | 42 / 42 | 0.023 / 0.024 |
-| 590 / 4 | 2.58x | 0.052 / 0.013 | 0.046 / 0.012 | 42 / 42 | 0.021 / 0.020 |
+| 194 / 4 (MOIST's default) | 1.00x | 0.25 / 0.08 | 0.25 / 0.08 | 26 / 27 | 0.065 / 0.062 |
+| 302 / 4 | 1.45x | 0.13 / 0.035 | 0.12 / 0.03 | 36 / 37 | 0.055 / 0.037 |
+| 350 / 4 | 1.63x | 0.13 / 0.034 | 0.12 / 0.03 | 39 / 40 | 0.044 / 0.044 |
+| **434 / 4 (config.DROP_NLEB, DROP_PRUNE_LEVEL)** | 1.97x | 0.075 / 0.022 | 0.073 / 0.022 | 42 / 42 | 0.021 / 0.024 |
+| 590 / 4 | 2.57x | 0.047 / 0.013 | 0.046 / 0.012 | 42 / 42 | 0.011 / 0.020 |
 
 The worst cases are small anions (phenoxide, methoxide, the cyanomethyl
-anion). Pruning level 4 is free: at 434 it drops 11% of the points (14% at
-most) and moves the PCM energy by under 1e-6 kcal/mol and the integrals by
-under 2e-6 relative. Level 5 is as harmless up to nleb 302 but at 590 moves
+anion). Pruning level 4 is free for the energies: at 434 it drops 11-12% of
+the points (15% at most) and moves the PCM energy by under 1e-6 kcal/mol and the
+integrals by under 2e-6 relative (for the gradients, see below). Level 5 is as harmless up to nleb 302 but at 590 moves
 the correction by up to 0.09 kcal/mol. 434 costs the PCM 2.0-2.3x its time at
 194, and at def2-QZVPPD with `memory_gb = 12` the surface integrals of 73% of
 the MNSol subset fit in core, against 96% at 194. With as many points as
-PySCF's Lebedev order 29 (302 here), DROP's worst ion is 0.12-0.14 kcal/mol
+PySCF's Lebedev order 29 (302 here), DROP's worst ion is 0.12-0.13 kcal/mol
 against 0.19 on PySCF's cavity.
 
 **The gradients converge more slowly than the energies.** Formate
 (HF/def2-SVP, density fixed, the rough parameters above), the largest error of
-a Cartesian gradient component against nleb 2030, in Eh/bohr (on SvdW-DROP,
-2030, 3074 and 5810 agree with each other to 3e-5 for the PCM and 2e-5 for the
-correction, and 434 is as far from each of them):
+a Cartesian gradient component against nleb 2030, in Eh/bohr:
 
 | nleb | PCM (SvdW / rho) | correction (SvdW / rho) |
 |---|---|---|
-| 194 | 5.0e-4 / 5.2e-4 | 1.0e-4 / 1.1e-4 |
-| **434** | 2.1e-4 / 2.1e-4 | 4.9e-5 / 6.1e-5 |
-| 590 | 1.7e-4 / 1.7e-4 | 4.0e-5 / 4.2e-5 |
-| 1202 | 6.3e-5 / 6.6e-5 | 2.8e-5 / 4.4e-5 |
+| 194 | 5.3e-4 / 6.2e-4 | 9.3e-5 / 5.6e-5 |
+| **434** | 2.5e-4 / 2.9e-4 | 1.1e-4 / 1.1e-4 |
+| 590 | 1.0e-4 / 1.2e-4 | 8.0e-5 / 7.3e-5 |
+| 1202 | 4.3e-5 / 5.4e-5 | 7.4e-5 / 6.9e-5 |
 
-(The largest components: PCM 8e-2, correction 6e-3 Eh/bohr.) At 194 the PCM's
-error is above the GAU criterion both drivers' optimizers converge to (maximum
-force 4.5e-4 Eh/bohr); at 434 it is half of it. The correction's error is
-about a quarter of the PCM's up to 590, 0.8-1.0% of its largest component at
-434, and falls slowly: it halves from 194 to 434, then falls by under half
-more up to 1202 (2.8x the points). By term, at 434: the field term 1% of its
-largest component, the dispersion 5% and the exchange 20%, though these two
-are small here (1.5e-4 and 2e-4 Eh/bohr at most). The errors scale with the
-fitted parameters; at these rough ones the correction's is about a tenth of
-GAU's maximum force. (Against nleb 1202 instead, as a first check did, the
-correction's error looked flat at about 1% from 302 to 590: 1202's own error,
-3-4e-5, is close to theirs.)
+(The largest components: PCM 8e-2, correction 6e-3 Eh/bohr.) The PCM's error
+falls with nleb: at 194 it is above the GAU criterion both drivers' optimizers
+converge to (maximum force 4.5e-4 Eh/bohr), at 434 about half of it, and 2030,
+3074 and 5810 agree with each other to 1-3e-5. The correction's does not fall:
+it is 0.5-2% of its largest component at every nleb, and 2030, 3074 and 5810
+still differ from each other by 3-6e-5, on both cavities (and on SvdW-DROP
+without pruning too). It is a floor of about 1e-4 Eh/bohr at these parameters (it scales with
+the fitted ones), a quarter of GAU's maximum force and under the PCM's own error
+at 434, so a finer grid buys the correction's gradient nothing. Most of it is the
+field term's (1.6e-4 at 434 on SvdW-DROP); the exchange term's is the largest
+relative to its size (20%), but that term is small here (2e-4 at most). On
+MOIST's own radii, before, the floor was 2e-5. Pruning (level 4) adds features
+about 1e-3 bohr wide to the correction's energy where a point's weight passes
+through the pruning window: the analytic gradient follows them (7e-10 against
+differences over 2.5e-4 bohr), but differences over 2e-3 bohr miss by 2e-6
+(psi4-swig-pcm's formate test, which therefore steps 2.5e-4).
 
 **What the relaxation is worth** on DROP, as on PySCF's cavity (rough
 parameters, exponent 2.5, c- and c+ set on each cavity to give acetate -15 and
@@ -526,10 +528,10 @@ methylammonium -5 kcal/mol; wB97X-3c/vDZP), self-consistent minus post-SCF:
 
 | solute | G (SvdW / rho) | SvdW-DROP | rho-DROP |
 |---|---|---|---|
-| ethanol | -0.95 / -1.29 | -0.055 | -0.049 |
-| acetic acid | -1.54 / -1.86 | -0.091 | -0.098 |
-| acetate | -14.2 / -15.3 | **-1.06** | **-0.80** |
-| methylammonium | -5.3 / -5.0 | -0.016 | -0.074 |
+| ethanol | -1.27 / -1.28 | -0.048 | -0.049 |
+| acetic acid | -1.97 / -1.86 | -0.076 | -0.098 |
+| acetate | -15.0 / -15.3 | **-0.89** | **-0.80** |
+| methylammonium | -5.5 / -5.0 | -0.016 | -0.074 |
 
 (kcal/mol.) On rho-DROP the self-consistent density also moves the surface.
 

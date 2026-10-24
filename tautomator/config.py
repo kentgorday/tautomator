@@ -188,19 +188,21 @@ DROP_COMPONENTS: dict[str, str] = {
 #: MOIST's Lebedev points per sphere for the DROP cavities (DROPParameters.nleb), on both
 #: drivers.  MOIST's default, 194, puts the IEF-PCM energy within 0.1 kcal/mol or 1e-3 of
 #: converged for only 26 of 42 solutes (25 neutrals, 17 ions; wB97X-3c/vDZP, against nleb
-#: 1202): small anions are off by up to 0.28 kcal/mol (phenoxide).  434 is the smallest size
-#: that holds all 42, on SvdW- and rho-DROP alike (worst 0.086 and 0.073 kcal/mol, neutrals
-#: 0.023), and it keeps the nonelectrostatic correction within 0.024 kcal/mol.  It has twice
+#: 1202): small anions are off by up to 0.25 kcal/mol (phenoxide).  434 is the smallest size
+#: that holds all 42, on SvdW- and rho-DROP alike (worst 0.075 and 0.073 kcal/mol, neutrals
+#: 0.022), and it keeps the nonelectrostatic correction within 0.024 kcal/mol.  It has twice
 #: the points of 194: the PCM's own time 2.0-2.3x, and at def2-QZVPPD with memory_gb = 12 the
 #: (k|mn) of 73% of the MNSol subset fit in core (96% at 194).  docs/nonelectrostatic.md.
 DROP_NLEB = 434
 
 #: MOIST's smooth pruning of near-zero quadrature weights (DROPParameters.wleb_prune_level),
-#: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  At nleb 434 it drops 11% of the
-#: points (14% at most) and moves the PCM energy by under 1e-6 kcal/mol and the
+#: on both drivers: 4 suppresses weights below 1e-6 to 1e-4.  At nleb 434 it drops 11-12% of
+#: the points (15% at most) and moves the PCM energy by under 1e-6 kcal/mol and the
 #: nonelectrostatic integrals by under 2e-6 relative (42 solutes, both cavities); every cost
-#: scales with the points.  Level 5 (1e-4 to 1e-2) is as harmless up to nleb 302, but at 590
-#: it moves the nonelectrostatic correction by up to 0.09 kcal/mol.
+#: scales with the points.  (Where a point's weight passes through the window, the
+#: correction's energy has a feature ~1e-3 bohr wide, which its analytic gradient follows.)
+#: Level 5 (1e-4 to 1e-2) is as harmless up to nleb 302, but at 590 it moves the
+#: nonelectrostatic correction by up to 0.09 kcal/mol.
 DROP_PRUNE_LEVEL = 4
 
 #: PySCF's PCM vdw_scale: every cavity's spheres are the modified Bondi radii times this.
@@ -539,7 +541,7 @@ _SCORING_DEFAULTS = {"method": "wB97M-V", "basis": "def2-QZVPPD"}
 # IEF-PCM on MOIST's SvdW-DROP cavity, on both drivers: a smooth solvent-excluded-like surface,
 # more accurate per surface point than the switching/Gaussian spheres (with as many points as
 # PySCF's Lebedev order 29, the worst ion error in the PCM energy over the 42-solute set is
-# 0.14 kcal/mol, against 0.19 on the spheres), and the nonelectrostatic correction runs on it
+# 0.13 kcal/mol, against 0.19 on the spheres), and the nonelectrostatic correction runs on it
 # with its gradients (docs/nonelectrostatic.md).  DROP_NLEB gives it twice those points.
 _DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM/SvdW-DROP", "psi4": "IEFPCM/SvdW-DROP"}
 

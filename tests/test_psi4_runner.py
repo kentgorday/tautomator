@@ -128,12 +128,13 @@ class TestMoistBlock:
         block = _pcm_block(model, "water", incore_mb=1000)
         compile(block, "<moist block>", "exec")
         assert "psi4_swig_pcm.enable(MoistSettings(" in block and "PCMSettings" not in block
-        assert "_radii = modified_bondi_radii(hydrogen=1.1)\n" in block
-        assert "radii=moist.CustomRadii(_radii[1:], numbers=range(1, len(_radii)))" in block
+        # through MoistSettings.radii, which psi4-swig-pcm puts into the cavity
+        assert "    radii=modified_bondi_radii(hydrogen=1.1),\n" in block
+        assert "radii=moist." not in block
 
     def test_hydrogen_radius_sizes_svdw_drops_spheres(self) -> None:
         block = _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3, incore_mb=1000)
-        assert "_radii = modified_bondi_radii(hydrogen=1.3)\n" in block
+        assert "    radii=modified_bondi_radii(hydrogen=1.3),\n" in block
 
     def test_hydrogen_radius_raises_on_rho_drop(self) -> None:
         # as on pyscf_runner: the radii only place the isodensity surface's points

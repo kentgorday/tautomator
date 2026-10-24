@@ -150,7 +150,15 @@ def _df_basis_block(basis: str, geom: Geometry) -> str:
 
 # What a job on a DROP solvent model imports, beyond what every PCM job does; check_installed
 # launches Psi4 on these lines alone.
-_MOIST_IMPORTS = "import moist\nfrom psi4_swig_pcm.moist_host import MoistSettings\n"
+# MOIST, and a psi4-swig-pcm whose MoistSettings builds the cavity on its own radii (the
+# switching/Gaussian cavity's spheres); check_installed runs the same lines
+_MOIST_IMPORTS = (
+    "import dataclasses\n"
+    "import moist\n"
+    "from psi4_swig_pcm.moist_host import MoistSettings\n"
+    'assert "radii" in {f.name for f in dataclasses.fields(MoistSettings)}, '
+    '"psi4-swig-pcm predates MoistSettings.radii"\n'
+)
 
 
 def _solvation(
@@ -187,8 +195,9 @@ def _pcm_block(
 
     A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
     with the cavity, grid and pruning pyscf_runner gives MOIST, on the switching/Gaussian
-    cavity's spheres (modified_bondi_radii, pyscf_runner's config.pcm_radii) rather than
-    MOIST's own radii.  On rho-DROP pcm_hydrogen_radius is refused, as pyscf_runner
+    cavity's spheres (modified_bondi_radii, pyscf_runner's config.pcm_radii, as
+    MoistSettings.radii, which psi4-swig-pcm puts into the cavity) rather than MOIST's own
+    radii.  On rho-DROP pcm_hydrogen_radius is refused, as pyscf_runner
     refuses it: there the radii only place the isodensity surface's points.
     """
     eps = solvent_dielectric(solvent)
@@ -208,14 +217,13 @@ def _pcm_block(
             )
         moist_settings = (
             "from psi4_swig_pcm.cavity import modified_bondi_radii\n"
-            f"_radii = modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r})\n"
             "psi4_swig_pcm.enable(MoistSettings(\n"
             f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
             f"parameters=moist.DROPParameters(nleb={DROP_NLEB}, "
-            f"wleb_prune_level={DROP_PRUNE_LEVEL}), "
-            "radii=moist.CustomRadii(_radii[1:], numbers=range(1, len(_radii)))),\n"
+            f"wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
             f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
             f"    incore_mb={incore_mb},\n"
+            f"    radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r}),\n"
             "))\n"
         )
         return preamble + _MOIST_IMPORTS + moist_settings
@@ -489,9 +497,10 @@ def check_installed(drop: bool = False) -> None:
         except RuntimeError as err:
             errors = re.findall(r"\w+Error: .*", str(err))
             raise ImportError(
-                f"The DROP solvent models need MOIST, which {psi4} cannot import "
+                f"The DROP solvent models need MOIST and a psi4-swig-pcm that builds its "
+                f"cavity on the PCM's radii, which {psi4} does not have "
                 f"({errors[-1].strip() if errors else 'see the cause above'}). Install or "
-                "update the psi4 environment, which has it: `pixi install -e psi4` (it "
+                "update the psi4 environment, which has them: `pixi install -e psi4` (it "
                 "compiles MOIST)."
             ) from err
 

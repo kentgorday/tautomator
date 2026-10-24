@@ -200,7 +200,7 @@ score. All three drivers implement the same three operations (`single_point`,
   PySCF's cavity (`IEF-PCM` works too); the cavity only exactly so, with no
   other names. Both drivers build them with 434 Lebedev points per sphere and
   MOIST's pruning level 4 (`config.DROP_NLEB`, `DROP_PRUNE_LEVEL`): MOIST's own
-  default, 194, left the PCM energy of small anions up to 0.28 kcal/mol off,
+  default, 194, left the PCM energy of small anions up to 0.25 kcal/mol off,
   434 keeps 42 test solutes within 0.1 kcal/mol (docs/nonelectrostatic.md, "On
   MOIST's DROP cavities"). The psi4 driver runs them too (see below). Water at
   wB97X-3c/vDZP (MMFF geometry): −6.4 kcal/mol on SvdW-DROP and −7.3 on
