@@ -595,6 +595,23 @@ The set of things that look weird and aren't. Read before "fixing":
   call it. conda-forge does not pair Accelerate's BLAS with another LAPACK.
   BLIS is not an option either (PySCF gets a NaN Fock matrix), nor pthreads
   OpenBLAS (pytorch excludes it).
+  Apple has fixed this in macOS 27.2, so Accelerate can come back once 27.2
+  is released. The bug is [scipy/scipy#26145](https://github.com/scipy/scipy/issues/26145)
+  (Apple's FB24671487): upper-triangle `dpotrf` only, segfaults at orders
+  2048 and 3000 under Guard Malloc, on an M4 Pro with conda-forge's
+  `*_newaccelerate` build on macOS 27.0. Apple's fix was confirmed there in
+  27.2 beta 3 (26B5101f) on Oct 13, 2026. That issue tested only the newer
+  interface and reports only crashes, not wrong factors. So before switching
+  back: rerun the Guard Malloc loop and check the factor
+  (`L @ L.T` against the input) for orders 1400-5600 through both
+  interfaces on 27.2; restore the two selectors `efe4782` removed, with their
+  notes (`libblas = { version = "*", build = "*_newaccelerate" }` under
+  `[target.osx-arm64.dependencies]` and
+  `[feature.psi4.target.osx-arm64.dependencies]`), and run
+  `pixi update --platform osx-arm64 libblas libcblas liblapack`; and put a
+  macOS 27.2 floor on the platform (`{ name = ..., platform = "osx-arm64",
+  macos = "27.2" }`, as the 15.5 floor was before `efe4782`), so that no
+  older macOS gets the heap corruption back.
 - **D4 composite Hessians fall up to wB97X-V** (`_HESSIAN_FALLBACK`). PySCF
   has no analytical D4 Hessian, but VV10 *is* analytical. Vibrational
   frequencies are insensitive to the dispersion correction, so this is a free
