@@ -127,8 +127,8 @@ dftd3-python = ">=1.0"
 dftd4-python = ">=4.0"
 gcp-correction = ">=2.3.2,<3"
 
-# MOIST: its SvdW-DROP and isodensity (rho-DROP) cavities for the PCM models, as
-# solvent_model "<model>/<cavity>" (IEFPCM/SvdW-DROP is the default): PySCF's through
+# MOIST: its SvdW-DROP and isodensity (rho-DROP) cavities for IEF-PCM, as [scoring] cavity
+# (SvdW-DROP is the default): PySCF's through
 # tautomator.pyscf_moist, Psi4's through psi4-swig-pcm's MOIST host; the nonelectrostatic
 # correction's gradients on them need the surface contractions the recipe's patch 0002
 # exports.  Built from source by pixi-build, from the recipe in psi4-swig-pcm's repository

@@ -16,7 +16,7 @@ from tests.formate_case import FORMATE, PARAMS, WATER, displaced
 
 
 def _mean_field(geom: Geometry, method: str = "hf", basis: str = "6-31g*") -> tuple[Any, Any]:
-    mol, mf = _build_mf(geom, -1, method, basis, "IEFPCM", "water")
+    mol, mf = _build_mf(geom, -1, method, basis, "ISWIG", "water")
     mf.verbose = 0
     mf.conv_tol = 1e-13
     # G is not variational in the density, so its finite difference carries the
@@ -81,7 +81,7 @@ class TestNonelectrostaticTerms:
                     -1,
                     "hf",
                     "6-31g*",
-                    "IEFPCM",
+                    "ISWIG",
                     "water",
                 )
                 values.append(
@@ -144,7 +144,7 @@ class TestPostScfGradient:
         ("xc", "reason"), [("tpss", "MGGA"), ("wb97m-v", "MGGA"), ("wb97x-v", "VV10")]
     )
     def test_refuses_meta_gga_and_vv10(self, xc: str, reason: str) -> None:
-        mol, mf = _build_mf(FORMATE, -1, "pbe", "sto-3g", "IEFPCM", "water")
+        mol, mf = _build_mf(FORMATE, -1, "pbe", "sto-3g", "ISWIG", "water")
         mf.verbose = 0
         mf.xc = xc
         mf.converged = True

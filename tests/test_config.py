@@ -99,7 +99,7 @@ class TestDriverDefaults:
         # refinement energy is to minimize in solvent outright.
         assert cfg.refinement.solvation == "optimize"
         assert (cfg.scoring.method, cfg.scoring.basis) == ("wB97M-V", "def2-QZVPPD")
-        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
+        assert cfg.scoring.cavity == "SvdW-DROP"
 
     def test_psi4_minimizes_in_solvent_too(self, tmp_toml: Callable[[str], Path]) -> None:
         # psi4-swig-pcm gives Psi4 analytical PCM gradients as well.
@@ -112,7 +112,7 @@ class TestDriverDefaults:
         """)
         )
         assert cfg.refinement.solvation == "optimize"
-        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
+        assert cfg.scoring.cavity == "SvdW-DROP"
 
     def test_gas_phase_scoring_makes_refinement_gas_phase(
         self, tmp_toml: Callable[[str], Path]
@@ -122,10 +122,10 @@ class TestDriverDefaults:
             [molecule]
             smiles = "CCO"
             [scoring]
-            solvent_model = "none"
+            cavity = "none"
         """)
         )
-        assert cfg.scoring.solvent_model is None
+        assert cfg.scoring.cavity is None
         assert cfg.refinement.solvation == "none"
         assert cfg.refinement.ewin == 10.0  # wider, because gas rankings rerank
 
@@ -140,33 +140,51 @@ class TestDriverDefaults:
             """)
             )
 
-    def test_solvent_model_not_on_this_driver_raises(
-        self, tmp_toml: Callable[[str], Path]
+    @pytest.mark.parametrize("driver", ["pyscf", "psi4"])
+    @pytest.mark.parametrize("cavity", ["SvdW-DROP", "rho-DROP", "ISWIG"])
+    def test_every_cavity_on_both_drivers(
+        self, tmp_toml: Callable[[str], Path], driver: str, cavity: str
     ) -> None:
-        with pytest.raises(ValueError, match="not available on the psi4 driver"):
+        cfg = load_config(
+            tmp_toml(f"""
+            [molecule]
+            smiles = "CCO"
+            [scoring]
+            cavity = "{cavity}"
+            [compute]
+            driver = "{driver}"
+        """)
+        )
+        assert cfg.scoring.cavity == cavity
+        assert cfg.provenance()["scoring"]["cavity"] == cavity
+
+    @pytest.mark.parametrize("cavity", ["spheres", "iswig", "SMD", "IEFPCM"])
+    def test_unknown_cavity_raises(self, tmp_toml: Callable[[str], Path], cavity: str) -> None:
+        with pytest.raises(ValueError, match="is not a cavity"):
             load_config(
-                tmp_toml("""
+                tmp_toml(f"""
                 [molecule]
                 smiles = "CCO"
                 [scoring]
-                solvent_model = "SMD"
-                [compute]
-                driver = "psi4"
+                cavity = "{cavity}"
             """)
             )
 
-    def test_pyscf_does_not_offer_ssvpe(self, tmp_toml: Callable[[str], Path]) -> None:
-        # Its symmetrized system matrix costs ions several kcal/mol on PySCF's
-        # surface, so the model is refused rather than left as a trap.
-        with pytest.raises(ValueError, match="not available on the pyscf driver"):
+    @pytest.mark.parametrize(
+        "model", ["SMD", "SSVPE", "CPCM", "COSMO", "DDCOSMO", "DDPCM", "CPCM/SvdW-DROP"]
+    )
+    def test_models_other_than_iefpcm_are_gone(
+        self, tmp_toml: Callable[[str], Path], model: str
+    ) -> None:
+        # IEF-PCM is the only model (SS(V)PE: its symmetrized system matrix costs ions
+        # several kcal/mol on PySCF's surface)
+        with pytest.raises(ValueError, match="IEF-PCM only"):
             load_config(
-                tmp_toml("""
+                tmp_toml(f"""
                 [molecule]
                 smiles = "CCO"
                 [scoring]
-                solvent_model = "SSVPE"
-                [compute]
-                driver = "pyscf"
+                solvent_model = "{model}"
             """)
             )
 
@@ -219,7 +237,7 @@ class TestProtocols:
         """)
         )
         assert cfg.refinement.solvation == "optimize"
-        assert cfg.scoring.solvent_model == "IEFPCM/SvdW-DROP"
+        assert cfg.scoring.cavity == "SvdW-DROP"
 
     @pytest.mark.parametrize("protocol", ["high_quality", "fast"])
     @pytest.mark.parametrize("own_solvation", ["", 'solvation = "none"'])
@@ -235,10 +253,10 @@ class TestProtocols:
             [refinement]
             {own_solvation}
             [scoring]
-            solvent_model = "none"
+            cavity = "none"
         """)
         )
-        assert cfg.scoring.solvent_model is None
+        assert cfg.scoring.cavity is None
         assert cfg.refinement.solvation == "none"
         assert cfg.refinement.solvation_prefilter_ewin is None
 
@@ -263,7 +281,7 @@ class TestProtocols:
             [molecule]
             smiles = "CCO"
             [scoring]
-            solvent_model = "none"
+            cavity = "none"
             [refinement]
         """
         with pytest.raises(ValueError, match="computes a solvation energy"):
@@ -313,7 +331,7 @@ class TestProtocols:
         assert prov["refinement"]["solvation"] == {
             "mode": "single_point",
             "level": "wB97X-3c/vDZP",
-            "model": "IEFPCM/SvdW-DROP",
+            "cavity": "SvdW-DROP",
             "driver": "pyscf",
         }
         assert prov["scoring"]["basis"] == "def2-TZVPPD"
@@ -431,22 +449,6 @@ class TestSolvationValidation:
         )
         assert cfg.refinement.solvation == "single_point"
 
-    @pytest.mark.parametrize("model", ["IEFPCM", "PCM", "CPCM", "COSMO"])
-    def test_psi4_offers_the_pyscf_pcm_models(
-        self, tmp_toml: Callable[[str], Path], model: str
-    ) -> None:
-        cfg = load_config(
-            tmp_toml(f"""
-            [molecule]
-            smiles = "CCO"
-            [scoring]
-            solvent_model = "{model}"
-            [compute]
-            driver = "psi4"
-        """)
-        )
-        assert cfg.scoring.solvent_model == model
-
     def test_solvated_refinement_with_gas_scoring_raises(
         self, tmp_toml: Callable[[str], Path]
     ) -> None:
@@ -458,7 +460,7 @@ class TestSolvationValidation:
                 [refinement]
                 solvation = "single_point"
                 [scoring]
-                solvent_model = "none"
+                cavity = "none"
             """)
             )
 
@@ -898,7 +900,7 @@ class TestDeprecatedSpellings:
                 [refinement]
                 rrho_method = "dft"
                 [scoring]
-                solvent_model = "IEFPCM"
+                cavity = "ISWIG"
             """)
             )
         assert cfg.refinement.rrho == "refinement"
@@ -913,14 +915,75 @@ class TestDeprecatedSpellings:
                 [molecule]
                 smiles = "CCO"
                 [refinement]
-                solvent_model = "CPCM"
+                solvent_model = "IEFPCM"
                 [compute]
                 driver = "pyscf"
             """)
             )
         assert cfg.refinement.solvation == "optimize"
-        assert cfg.scoring.solvent_model == "CPCM"
-        assert "[refinement] solvent_model = 'CPCM' is deprecated" in caplog.text
+        assert cfg.scoring.cavity == "ISWIG"
+        assert "[refinement] solvent_model = 'IEFPCM' is deprecated" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("model", "cavity"),
+        [
+            ("IEFPCM", "ISWIG"),
+            ("IEF-PCM", "ISWIG"),
+            ("PCM", "ISWIG"),
+            ("IEFPCM/SvdW-DROP", "SvdW-DROP"),
+            ("ief-pcm/rho-DROP", "rho-DROP"),
+            ("none", None),
+        ],
+    )
+    def test_scoring_solvent_model_names_its_cavity(
+        self,
+        tmp_toml: Callable[[str], Path],
+        caplog: pytest.LogCaptureFixture,
+        model: str,
+        cavity: str | None,
+    ) -> None:
+        refinement = 'solvation = "none"' if cavity is None else ""
+        with caplog.at_level(logging.WARNING):
+            cfg = load_config(
+                tmp_toml(f"""
+                [molecule]
+                smiles = "CCO"
+                [refinement]
+                {refinement}
+                [scoring]
+                solvent_model = "{model}"
+            """)
+            )
+        assert cfg.scoring.cavity == cavity
+        assert f"[scoring] solvent_model = {model!r} is deprecated" in caplog.text
+
+    @pytest.mark.parametrize("model", ["IEFPCM/svdw-drop", "IEFPCM/isodensity-DROP"])
+    def test_old_drop_models_need_the_exact_cavity_name(
+        self, tmp_toml: Callable[[str], Path], model: str
+    ) -> None:
+        with pytest.raises(ValueError, match="not a DROP cavity"):
+            load_config(
+                tmp_toml(f"""
+                [molecule]
+                smiles = "CCO"
+                [scoring]
+                solvent_model = "{model}"
+            """)
+            )
+
+    def test_solvent_model_and_cavity_that_disagree_raise(
+        self, tmp_toml: Callable[[str], Path]
+    ) -> None:
+        with pytest.raises(ValueError, match="conflicts with"):
+            load_config(
+                tmp_toml("""
+                [molecule]
+                smiles = "CCO"
+                [scoring]
+                solvent_model = "IEFPCM"
+                cavity = "rho-DROP"
+            """)
+            )
 
     def test_per_stage_solvent_moves_to_molecule(
         self, tmp_toml: Callable[[str], Path], caplog: pytest.LogCaptureFixture
@@ -1051,8 +1114,8 @@ class TestFixedSpecies:
             )
 
 
-class TestDropSolventModels:
-    """MOIST's DROP cavities as solvent models "<PCM model>/<cavity>", on either driver."""
+class TestDropCavities:
+    """MOIST's DROP cavities ([scoring] cavity), on either driver."""
 
     @pytest.fixture()
     def moist_installed(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
@@ -1074,7 +1137,7 @@ class TestDropSolventModels:
     def _load(
         self,
         tmp_toml: Callable[[str], Path],
-        model: str,
+        cavity: str,
         *,
         driver: str = "pyscf",
         scoring: str = "",
@@ -1087,61 +1150,37 @@ class TestDropSolventModels:
                 [refinement]
                 {refinement}
                 [scoring]
-                solvent_model = "{model}"
+                cavity = "{cavity}"
                 {scoring}
                 [compute]
                 driver = "{driver}"
             """)
         )
 
-    @pytest.mark.parametrize(
-        ("model", "parsed"),
-        [
-            ("IEFPCM/SvdW-DROP", ("IEF-PCM", "SvdW-DROP")),
-            ("ief-pcm/SvdW-DROP", ("IEF-PCM", "SvdW-DROP")),
-            ("PCM/rho-DROP", ("IEF-PCM", "rho-DROP")),
-            ("COSMO/SvdW-DROP", ("COSMO", "SvdW-DROP")),
-            # one name per cavity, written exactly
-            ("CPCM/isodensity-DROP", None),
-            ("IEFPCM/svdw-drop", None),
-            ("IEFPCM/SVDWDROP", None),
-            ("IEFPCM/Rho-DROP", None),
-            ("IEFPCM", None),
-            ("SMD/SvdW-DROP", None),
-            ("IEFPCM/ISWIG", None),
-        ],
-    )
-    def test_names(self, model: str, parsed: tuple[str, str] | None) -> None:
-        from tautomator.config import drop_solvent_model
-
-        assert drop_solvent_model(model) == parsed
-
-    @pytest.mark.parametrize(
-        "model", ["IEFPCM/SvdW-DROP", "IEF-PCM/rho-DROP", "CPCM/SvdW-DROP", "COSMO/rho-DROP"]
-    )
+    @pytest.mark.parametrize("cavity", ["SvdW-DROP", "rho-DROP"])
     def test_accepted_on_pyscf(
         self,
         tmp_toml: Callable[[str], Path],
         moist_installed: Callable[[bool], None],
-        model: str,
+        cavity: str,
     ) -> None:
         moist_installed(True)
-        config = self._load(tmp_toml, model)
-        assert config.scoring.solvent_model == model
+        config = self._load(tmp_toml, cavity)
+        assert config.scoring.cavity == cavity
         assert config.refinement.solvation == "optimize"  # MOIST has analytical gradients
-        assert config.provenance()["scoring"]["solvent_model"] == model
+        assert config.provenance()["scoring"]["cavity"] == cavity
 
-    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "CPCM/rho-DROP"])
+    @pytest.mark.parametrize("cavity", ["SvdW-DROP", "rho-DROP"])
     def test_accepted_on_psi4_without_moist_here(
         self,
         tmp_toml: Callable[[str], Path],
         moist_installed: Callable[[bool], None],
-        model: str,
+        cavity: str,
     ) -> None:
         # Psi4 imports MOIST in the psi4 environment, not in this one
         moist_installed(False)
-        config = self._load(tmp_toml, model, driver="psi4")
-        assert config.scoring.solvent_model == model
+        config = self._load(tmp_toml, cavity, driver="psi4")
+        assert config.scoring.cavity == cavity
         assert config.refinement.solvation == "optimize"
 
     def test_hessian_in_solvent_on_psi4(
@@ -1149,9 +1188,7 @@ class TestDropSolventModels:
     ) -> None:
         # Psi4's frequencies are finite differences of MOIST's analytical gradients
         moist_installed(False)
-        config = self._load(
-            tmp_toml, "IEFPCM/SvdW-DROP", driver="psi4", refinement='rrho = "refinement"'
-        )
+        config = self._load(tmp_toml, "SvdW-DROP", driver="psi4", refinement='rrho = "refinement"')
         assert config.refinement.rrho == "refinement"
         assert config.refinement.solvation == "optimize"
 
@@ -1160,68 +1197,42 @@ class TestDropSolventModels:
     ) -> None:
         moist_installed(False)
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            self._load(
-                tmp_toml,
-                "IEFPCM/rho-DROP",
-                driver="psi4",
-                scoring="pcm_hydrogen_radius = 1.2",
-            )
+            self._load(tmp_toml, "rho-DROP", driver="psi4", scoring="pcm_hydrogen_radius = 1.2")
 
-    def test_every_cavity_and_model_has_its_moist_classes(self) -> None:
+    def test_every_cavity_has_its_moist_classes(self) -> None:
         # both drivers build the model from these; a name missing here would fail every job
-        from tautomator.config import DROP_CAVITIES, DROP_COMPONENTS, DROP_LSF, PCM_METHODS
+        from tautomator.config import CAVITIES, DROP_CAVITIES, DROP_LSF
 
-        assert set(DROP_LSF) == set(DROP_CAVITIES)
-        assert set(DROP_COMPONENTS) == set(PCM_METHODS.values())
+        assert set(DROP_LSF) == set(DROP_CAVITIES) <= set(CAVITIES)
 
     def test_those_classes_are_moists(self) -> None:
-        from tautomator.config import DROP_COMPONENTS, DROP_LSF
+        from tautomator.config import DROP_COMPONENT, DROP_LSF
 
         moist = pytest.importorskip("moist")
-        for name in [*DROP_LSF.values(), *DROP_COMPONENTS.values()]:
+        for name in [*DROP_LSF.values(), DROP_COMPONENT]:
             assert isinstance(getattr(moist, name), type), name
 
-    def test_unknown_cavity(
-        self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
-    ) -> None:
-        moist_installed(True)
-        # spelled as the README spells them, not as the config normalizes them
-        with pytest.raises(ValueError, match="not available on the pyscf driver") as err:
-            self._load(tmp_toml, "IEFPCM/sphere-DROP")
-        assert "SvdW-DROP or rho-DROP" in str(err.value)
-        assert "SVDWDROP" not in str(err.value)
-
-    @pytest.mark.parametrize("model", ["IEFPCM/isodensity-DROP", "IEFPCM/svdw-drop"])
+    @pytest.mark.parametrize(
+        "cavity", ["sphere-DROP", "isodensity-DROP", "svdw-drop", "SVDWDROP", "Rho-DROP"]
+    )
     def test_one_name_per_cavity(
         self,
         tmp_toml: Callable[[str], Path],
         moist_installed: Callable[[bool], None],
-        model: str,
+        cavity: str,
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match="not available on the pyscf driver"):
-            self._load(tmp_toml, model)
-
-    def test_a_driver_takes_only_its_own_drop_models(
-        self,
-        tmp_toml: Callable[[str], Path],
-        moist_installed: Callable[[bool], None],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # a DROP model is checked against the driver's set, as any other model is
-        import tautomator.config as config
-
-        moist_installed(True)
-        monkeypatch.setitem(config._SOLVENT_MODELS, "pyscf", set(config.PCM_METHODS))
-        with pytest.raises(ValueError, match="not available on the pyscf driver"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP")
+        # spelled as the README spells them, and only so
+        with pytest.raises(ValueError, match="is not a cavity") as err:
+            self._load(tmp_toml, cavity)
+        assert "SvdW-DROP, rho-DROP, ISWIG" in str(err.value)
 
     def test_needs_moist(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:
         moist_installed(False)
         with pytest.raises(ValueError, match="needs MOIST"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP")
+            self._load(tmp_toml, "SvdW-DROP")
 
     @pytest.mark.parametrize("section", ["scoring", "refinement"])
     def test_hydrogen_radius_sizes_svdw_drops_spheres(
@@ -1232,7 +1243,7 @@ class TestDropSolventModels:
     ) -> None:
         # SvdW-DROP is built on PySCF's cavity's spheres (config.pcm_radii)
         moist_installed(True)
-        config = self._load(tmp_toml, "IEFPCM/SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+        config = self._load(tmp_toml, "SvdW-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
         assert getattr(config, section).pcm_hydrogen_radius == 1.2
 
     @pytest.mark.parametrize("section", ["scoring", "refinement"])
@@ -1244,18 +1255,19 @@ class TestDropSolventModels:
     ) -> None:
         moist_installed(True)
         with pytest.raises(ValueError, match=f"\\[{section}\\] pcm_hydrogen_radius .* nothing"):
-            self._load(tmp_toml, "IEFPCM/rho-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
+            self._load(tmp_toml, "rho-DROP", **{section: "pcm_hydrogen_radius = 1.2"})
 
     def test_no_hessian_in_solvent(
         self, tmp_toml: Callable[[str], Path], moist_installed: Callable[[bool], None]
     ) -> None:
         moist_installed(True)
-        with pytest.raises(ValueError, match="Hessian"):
-            self._load(tmp_toml, "IEFPCM/SvdW-DROP", refinement='rrho = "refinement"')
+        with pytest.raises(ValueError, match="Hessian") as err:
+            self._load(tmp_toml, "SvdW-DROP", refinement='rrho = "refinement"')
+        assert "cavity = 'ISWIG'" in str(err.value)
         # a gas-phase Hessian (solvation as a single point) is fine
         config = self._load(
             tmp_toml,
-            "IEFPCM/SvdW-DROP",
+            "SvdW-DROP",
             refinement='rrho = "refinement"\nsolvation = "single_point"',
         )
         assert config.refinement.rrho == "refinement"
@@ -1273,7 +1285,7 @@ class TestUnknownSettings:
             ("molecule", "solvnet", "solvent"),
             ("sampling", "ewni", "ewin"),
             ("refinement", "rrhoo", "rrho"),
-            ("scoring", "solvent_modle", "solvent_model"),
+            ("scoring", "caivty", "cavity"),
             ("compute", "memroy_gb", "memory_gb"),
         ],
     )

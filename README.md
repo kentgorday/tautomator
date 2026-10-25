@@ -162,11 +162,11 @@ score. All three drivers implement the same three operations (`single_point`,
 `optimize`, `frequencies`) with the same signature, so `refinement.py` and
 `scoring.py` are backend-agnostic.
 
-- **`"pyscf"` (default).** In-process Python library. Supports analytical PCM
-  gradients (IEF-PCM, C-PCM, COSMO) on PySCF's own switching/Gaussian cavity
-  and on MOIST's DROP cavities (below; IEF-PCM on SvdW-DROP is the default
-  solvent model on both drivers), and SMD. Of the 3c composites
-  it implements only wB97X-3c. The PCM models run through FastPCM
+- **`"pyscf"` (default).** In-process Python library. Runs IEF-PCM, the one
+  implicit-solvent model, with analytical gradients, on PySCF's own
+  switching/Gaussian cavity (`ISWIG`) and on MOIST's DROP cavities (below;
+  SvdW-DROP is the default cavity on both drivers). Of the 3c composites
+  it implements only wB97X-3c. On ISWIG the PCM runs through FastPCM
   (`tautomator/pyscf_fast_pcm.py`): PySCF's own PCM, cavity and results, with
   the per-geometry work kept between SCF iterations. A wB97X-3c/vDZP energy and
   gradient in IEF-PCM water costs 1.2-1.3x the gas-phase job, against 3.3-4.5x
@@ -190,15 +190,12 @@ score. All three drivers implement the same three operations (`single_point`,
   PySCF cannot measure the memory the process holds, so the whole half is
   available; on Linux it can, so the limit there is lower.
 
-  The same PCM models also run on MOIST's DROP cavities
-  (`tautomator/pyscf_moist.py`; MOIST is in the default environment):
-  `solvent_model = "<model>/<cavity>"`, with model IEFPCM, CPCM or COSMO and
-  cavity `SvdW-DROP` (a smooth solvent-excluded-like surface over the spheres
-  of PySCF's cavity) or `rho-DROP` (the electron isodensity surface, rho_iso =
-  1e-3 e/bohr³, which follows the density through the SCF), e.g.
-  `"IEFPCM/SvdW-DROP"`, the default solvent model. The model is spelled as for
-  PySCF's cavity (`IEF-PCM` works too); the cavity only exactly so, with no
-  other names. Both drivers build them with 434 Lebedev points per sphere and
+  IEF-PCM also runs on MOIST's DROP cavities (`tautomator/pyscf_moist.py`;
+  MOIST is in the default environment): `[scoring] cavity = "SvdW-DROP"` (the
+  default: a smooth solvent-excluded-like surface over the spheres of PySCF's
+  cavity) or `"rho-DROP"` (the electron isodensity surface, rho_iso = 1e-3
+  e/bohr³, which follows the density through the SCF), each spelled exactly so,
+  with no other names. Both drivers build them with 434 Lebedev points per sphere and
   MOIST's pruning level 4 (`config.DROP_NLEB`, `DROP_PRUNE_LEVEL`): MOIST's own
   default, 194, left the PCM energy of small anions up to 0.25 kcal/mol off,
   434 keeps 42 test solutes within 0.1 kcal/mol (docs/nonelectrostatic.md, "On
@@ -257,17 +254,17 @@ score. All three drivers implement the same three operations (`single_point`,
   2 GB as at 4, and the pKa set's largest species at def2-QZVPPD as fast at
   6 GB as at 12 (that one measured on Accelerate's BLAS).
 
-  The DROP solvent models (`"<model>/<cavity>"`, as for PySCF above) run
-  through psi4-swig-pcm's MOIST host, with the same cavities, radii, grid and
-  pruning as on PySCF. The `psi4` environment has MOIST for them, as the
-  default environment does (see "Non-obvious design decisions"). A run on a
-  DROP model first checks that its Psi4 can import MOIST (a `psi4` environment
-  installed before it had MOIST cannot), so a missing one stops the run
-  instead of failing every conformer. Psi4 takes its frequencies as finite
+  The DROP cavities (as for PySCF above) run through psi4-swig-pcm's MOIST
+  host, with the same radii, grid and pruning as on PySCF. The `psi4`
+  environment has MOIST for them, as the default environment does (see
+  "Non-obvious design decisions"). A run on a DROP cavity first checks that
+  its Psi4 can import MOIST (a `psi4` environment installed before it had
+  MOIST cannot), so a missing one stops the run instead of failing every
+  conformer. Psi4 takes its frequencies as finite
   differences of the analytical gradients, so on this driver `rrho =
   "refinement"` works in MOIST's PCM too (at ~6N gradients per Hessian, as in
   any Psi4 PCM). `pcm_hydrogen_radius` works as on PySCF (on SvdW-DROP).
-  Solvation energies match PySCF's on the same model to <1e-8 kcal/mol
+  Solvation energies match PySCF's on the same cavity to <1e-8 kcal/mol
   (formate, HF/def2-SVP, SvdW- and rho-DROP), and to ~3e-6 kcal/mol with
   vDZP's ECPs, whose integrals the two programs compute differently (their
   gas-phase energies differ by up to 2e-4 kcal/mol). A wB97X-3c/vDZP single
@@ -302,9 +299,17 @@ meant or the section it belongs in, rather than ignored: a misspelled or
 retired setting would otherwise leave the run on its default without a word.
 The deprecated spellings are still accepted, with a warning.
 
+Implicit solvent is IEF-PCM, the only model, so its settings are where it runs:
+`[scoring] cavity` (`"SvdW-DROP"`, the default, `"rho-DROP"` or `"ISWIG"`, PySCF's
+switching/Gaussian cavity; or `"none"` for the gas phase), for refinement's
+solvation energies as well as scoring's, and `[molecule] solvent`. An old
+`[scoring] solvent_model` naming IEF-PCM is read as its cavity with a warning
+(`"IEFPCM"` is `"ISWIG"`, `"IEFPCM/SvdW-DROP"` is `"SvdW-DROP"`); C-PCM, COSMO,
+SMD and PySCF's ddCOSMO and ddPCM are gone.
+
 A top-level `protocol` key fills in every level of theory and window at once;
 anything written in the file wins over the preset. With gas-phase scoring
-(`[scoring] solvent_model = "none"`), a preset's refinement is gas-phase too, as
+(`[scoring] cavity = "none"`), a preset's refinement is gas-phase too, as
 it is without a preset, and `fast` drops its solvation pre-filter along with
 the single point it skips. A gas-phase run uses no solvent anywhere: sampling
 and the xtb RRHO are gas-phase as well, so its free energy can serve as the gas
@@ -498,7 +503,7 @@ The set of things that look weird and aren't. Read before "fixing":
   Besides the ABI conflict, running Psi4 as a separate program is what keeps
   tautomator's license independent of Psi4's LGPL-3.0.
 - **MOIST comes from psi4-swig-pcm's repository**, in the default environment
-  (the `moist` feature; the default solvent model needs it). No Psi4 comes with
+  (the `moist` feature; the default cavity needs it). No Psi4 comes with
   it: MOIST has no conda-forge or PyPI package, and the rattler-build recipe
   that builds it lives in psi4-swig-pcm (`packages/moist`), so that both
   repositories build MOIST from one recipe. `pixi.toml` pins the commit (`rev`,
@@ -512,7 +517,7 @@ The set of things that look weird and aren't. Read before "fixing":
   and MOIST's Fortran libraries linked statically into its extension and not
   installed, so they cannot clash with the `mctc-lib` xtb brings in. Its
   `tests/test_moist_build.py` checks the build. The `psi4` environment has
-  MOIST too, for the DROP models on the psi4 driver, rather than a second Psi4
+  MOIST too, for the DROP cavities on the psi4 driver, rather than a second Psi4
   environment of its own: every Psi4 job of a run then comes from one
   environment, so a solvation energy never subtracts energies from two
   installs that could have drifted apart, and a separate one would isolate

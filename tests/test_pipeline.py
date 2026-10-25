@@ -17,9 +17,7 @@ class _Stop(Exception):
     """Raised by the stubbed sampling stage once it has seen its arguments."""
 
 
-@pytest.mark.parametrize(
-    ("scoring", "expected"), [("", "woctanol"), ('solvent_model = "none"', None)]
-)
+@pytest.mark.parametrize(("scoring", "expected"), [("", "woctanol"), ('cavity = "none"', None)])
 def test_a_gas_phase_run_samples_in_the_gas_phase(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scoring: str, expected: str | None
 ) -> None:
@@ -55,17 +53,17 @@ output_dir = "{tmp_path / "out"}"
 
 
 @pytest.mark.parametrize(
-    ("descriptors", "models"),
-    [(None, ()), ([], ()), (["IEFPCM", "CPCM/rho-DROP"], ("IEFPCM", "CPCM/rho-DROP"))],
+    ("descriptors", "cavities"),
+    [(None, ()), ([], ()), (["ISWIG", "rho-DROP"], ("ISWIG", "rho-DROP"))],
 )
 def test_scoring_saves_descriptors_when_asked(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     descriptors: list[str] | None,
-    models: tuple[str, ...],
+    cavities: tuple[str, ...],
 ) -> None:
     """The descriptors (asked for by the caller, not the config) go next to the run's
-    ensemble.json, on the run's model and each further one."""
+    ensemble.json, on the run's cavity and each further one."""
     seen: dict[str, object] = {}
 
     def fake_score(*args: object, **kwargs: object) -> None:
@@ -78,17 +76,18 @@ def test_scoring_saves_descriptors_when_asked(
     with pytest.raises(_Stop):
         pipeline.run_pipeline(_config(tmp_path, out), resume=True, descriptors=descriptors)
     assert seen["descriptors_dir"] == (None if descriptors is None else out)
-    assert seen["descriptor_models"] == models
+    assert seen["descriptor_cavities"] == cavities
 
 
 @pytest.mark.parametrize(
     ("driver", "scoring", "descriptors", "match"),
     [
         ("psi4", "", [], "driver = 'pyscf'"),
-        ("pyscf", '[scoring]\nsolvent_model = "SMD"', [], "analytical PCM"),
-        ("pyscf", "", ["SMD"], "not an analytical PCM"),
-        ("pyscf", "", ["IEFPCM/SvdW-DROP"], "the run's own"),
-        ("pyscf", "", ["IEFPCM", "IEF-PCM"], "listed twice"),
+        ("pyscf", '[scoring]\ncavity = "none"', [], "need a solvated run"),
+        ("pyscf", "", ["SMD"], "not a cavity"),
+        ("pyscf", "", ["IEFPCM/rho-DROP"], "not a cavity"),
+        ("pyscf", "", ["SvdW-DROP"], "the run's own"),
+        ("pyscf", "", ["ISWIG", "ISWIG"], "listed twice"),
     ],
 )
 def test_descriptor_request_is_checked_before_any_stage(

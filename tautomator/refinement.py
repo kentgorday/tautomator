@@ -16,7 +16,7 @@ import logging
 from types import ModuleType
 
 from tautomator import xtb_runner
-from tautomator.config import DEFAULT_MEMORY_GB, RefinementConfig, drop_solvent_model
+from tautomator.config import DEFAULT_MEMORY_GB, DROP_CAVITIES, RefinementConfig
 from tautomator.ensemble import (
     HARTREE_TO_KCAL,
     _effective_energy,
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 def _get_driver(name: str, *, drop: bool = False) -> ModuleType:
     """Return the refinement driver module for the given name.
 
-    drop: the run has a DROP solvent model, so Psi4 must be able to import MOIST.
+    drop: the run is on a DROP cavity, so Psi4 must be able to import MOIST.
     """
     if name == "psi4":
         from tautomator import psi4_runner
@@ -59,7 +59,7 @@ def refine(
     *,
     driver: str,
     solvent: str = "water",
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     threads: int = 1,
     memory_gb: float = DEFAULT_MEMORY_GB,
 ) -> Ensemble:
@@ -76,20 +76,20 @@ def refine(
 
     Modifies the ensemble in-place and returns it.
     """
-    # The run's solvent model, even when this stage is gas-phase: scoring will need MOIST
+    # The run's cavity, even when this stage is gas-phase: scoring will need MOIST
     # then, and a missing one should stop the run before the refinement, not after it.
-    dft = _get_driver(driver, drop=drop_solvent_model(solvent_model) is not None)
+    dft = _get_driver(driver, drop=cavity in DROP_CAVITIES)
     engine = dft if config.engine == driver else _get_driver(config.engine)
     if config.engine == "orbmol":
         # Outside the per-conformer handlers below, which would record a model
         # that cannot be loaded as each conformer's own optimization failure.
         engine.preload(config.method)
     # xtb's RRHO in the run's solvent, or in the gas phase for a gas-phase run.
-    xtb_solvent = solvent if config.rrho == "xtb" and solvent_model is not None else None
+    xtb_solvent = solvent if config.rrho == "xtb" and cavity is not None else None
 
     for cs in ensemble.charge_states.values():
         log.info(f"Refining charge state q={cs.charge}...")
-        _optimize_charge_state(cs, config, engine, solvent, solvent_model, threads, memory_gb)
+        _optimize_charge_state(cs, config, engine, solvent, cavity, threads, memory_gb)
 
         # Re-file conformers whose proton moved during the optimization before
         # deduplicating, so a migrated conformer is compared against the
@@ -109,10 +109,10 @@ def refine(
         if after < before:
             log.info(f"  q={cs.charge}: {before} conformer(s) -> {after} distinct state(s)")
 
-        _add_rrho(cs, config, engine, xtb_solvent, solvent, solvent_model, threads, memory_gb)
+        _add_rrho(cs, config, engine, xtb_solvent, solvent, cavity, threads, memory_gb)
         if config.solvation == "single_point":
             _apply_gas_prefilter(cs, config)
-            _add_solvation(cs, config, dft, driver, solvent, solvent_model, threads, memory_gb)
+            _add_solvation(cs, config, dft, driver, solvent, cavity, threads, memory_gb)
 
         filter_charge_state_by_energy(cs, config.ewin)
         n_conf = sum(len(ms.conformers) for ms in cs.microstates)
@@ -129,7 +129,7 @@ def _optimize_charge_state(
     config: RefinementConfig,
     engine: ModuleType,
     solvent: str,
-    solvent_model: str | None,
+    cavity: str | None,
     threads: int,
     memory_gb: float,
 ) -> None:
@@ -149,7 +149,7 @@ def _optimize_charge_state(
                     cs.charge,
                     config.method,
                     config.basis,
-                    solvent_model if in_solvent else None,
+                    cavity if in_solvent else None,
                     solvent if in_solvent else None,
                     pcm_hydrogen_radius=config.pcm_hydrogen_radius,
                     threads=threads,
@@ -211,7 +211,7 @@ def _add_rrho(
     engine: ModuleType,
     xtb_solvent: str | None,
     solvent: str,
-    solvent_model: str | None,
+    cavity: str | None,
     threads: int,
     memory_gb: float,
 ) -> None:
@@ -235,7 +235,7 @@ def _add_rrho(
                         cs.charge,
                         config.method,
                         config.basis,
-                        solvent_model if in_solvent else None,
+                        cavity if in_solvent else None,
                         solvent if in_solvent else None,
                         pcm_hydrogen_radius=config.pcm_hydrogen_radius,
                         threads=threads,
@@ -329,7 +329,7 @@ def _add_solvation(
     dft: ModuleType,
     driver: str,
     solvent: str,
-    solvent_model: str | None,
+    cavity: str | None,
     threads: int,
     memory_gb: float,
 ) -> None:
@@ -352,7 +352,7 @@ def _add_solvation(
                     cs.charge,
                     method,
                     basis,
-                    solvent_model,
+                    cavity,
                     solvent,
                     pcm_hydrogen_radius=config.pcm_hydrogen_radius,
                     threads=threads,

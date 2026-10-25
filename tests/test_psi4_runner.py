@@ -40,45 +40,33 @@ def _water() -> Geometry:
 class TestPCMBlock:
     """The input lines that turn psi4-swig-pcm on, with the model pyscf_runner builds."""
 
-    @pytest.mark.parametrize(
-        ("model", "method"),
-        [
-            ("IEFPCM", "IEF-PCM"),
-            ("PCM", "IEF-PCM"),
-            ("CPCM", "C-PCM"),
-            ("C-PCM", "C-PCM"),
-            ("COSMO", "COSMO"),
-        ],
-    )
-    def test_names_the_model(self, model: str, method: str) -> None:
-        assert f"method={method!r}" in _pcm_block(model, "water", incore_mb=1000)
+    def test_is_iefpcm(self) -> None:
+        assert "method='IEF-PCM'" in _pcm_block("ISWIG", "water", incore_mb=1000)
 
     def test_dielectric_is_the_one_pyscf_gets(self) -> None:
         assert f"eps={solvent_dielectric('methanol')!r}" in _pcm_block(
-            "IEFPCM", "Methanol", incore_mb=1000
+            "ISWIG", "Methanol", incore_mb=1000
         )
 
     def test_switching_is_the_one_pyscf_gets(self) -> None:
-        assert f"switching={PCM_SWITCHING!r}" in _pcm_block("IEFPCM", "water", incore_mb=1000)
+        assert f"switching={PCM_SWITCHING!r}" in _pcm_block("ISWIG", "water", incore_mb=1000)
 
     def test_hydrogen_radius_is_a_free_parameter(self) -> None:
-        assert "modified_bondi_radii(hydrogen=1.1)" in _pcm_block(
-            "IEFPCM", "water", incore_mb=1000
-        )
+        assert "modified_bondi_radii(hydrogen=1.1)" in _pcm_block("ISWIG", "water", incore_mb=1000)
         assert "modified_bondi_radii(hydrogen=1.3)" in _pcm_block(
-            "IEFPCM", "water", 1.3, incore_mb=1000
+            "ISWIG", "water", 1.3, incore_mb=1000
         )
 
     def test_is_python(self) -> None:
-        block = _pcm_block("IEFPCM", "water", incore_mb=1000)
+        block = _pcm_block("ISWIG", "water", incore_mb=1000)
         compile(block, "<pcm block>", "exec")
         assert "psi4_swig_pcm.enable(psi4_swig_pcm.PCMSettings(" in block
 
-    def test_unknown_model_or_solvent_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):
+    def test_unknown_cavity_or_solvent_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown cavity"):
             _pcm_block("SMD", "water", incore_mb=1000)
         with pytest.raises(ValueError, match="Unknown solvent"):
-            _pcm_block("IEFPCM", "ammonia", incore_mb=1000)
+            _pcm_block("ISWIG", "ammonia", incore_mb=1000)
 
     def test_every_job_enables_it_before_computing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         inputs: list[str] = []
@@ -90,7 +78,7 @@ class TestPCMBlock:
             return "=== FINAL ENERGY: -1.000000000000 ===\n=== CONVERGED: 1 ===\n"
 
         monkeypatch.setattr(psi4_runner, "_run_psi4", fake_run)
-        solvated = ("PBE0", "def2-SVP", "IEFPCM", "water")
+        solvated = ("PBE0", "def2-SVP", "ISWIG", "water")
         psi4_runner.single_point(_water(), 0, *solvated)
         psi4_runner.optimize(_water(), 0, *solvated)
         psi4_runner.frequencies(_water(), 0, *solvated)
@@ -102,27 +90,22 @@ class TestPCMBlock:
 
 
 class TestMoistBlock:
-    """A DROP solvent model: psi4-swig-pcm's MOIST host, with pyscf_runner's MOIST model."""
+    """A DROP cavity: psi4-swig-pcm's MOIST host, with pyscf_runner's MOIST model."""
 
     @pytest.mark.parametrize(
-        ("model", "component", "lsf"),
-        [
-            ("IEFPCM/SvdW-DROP", "ModelComponentIEFPCM", "SvdW"),
-            ("PCM/rho-DROP", "ModelComponentIEFPCM", "Isodensity"),
-            ("C-PCM/rho-DROP", "ModelComponentCPCM", "Isodensity"),
-            ("COSMO/SvdW-DROP", "ModelComponentCOSMO", "SvdW"),
-        ],
+        ("cavity", "lsf"), [("SvdW-DROP", "SvdW"), ("rho-DROP", "Isodensity")]
     )
-    def test_names_the_model_and_cavity(self, model: str, component: str, lsf: str) -> None:
-        block = _pcm_block(model, "water", incore_mb=1000)
-        assert f"components=(moist.{component}({solvent_dielectric('water')!r}),)" in block
+    def test_names_iefpcm_and_the_cavity(self, cavity: str, lsf: str) -> None:
+        block = _pcm_block(cavity, "water", incore_mb=1000)
+        eps = solvent_dielectric("water")
+        assert f"components=(moist.ModelComponentIEFPCM({eps!r}),)" in block
         assert f"cavity=moist.DROP(lsf=moist.{lsf}()," in block
 
     def test_grid_and_pruning_as_pyscf_runner_gives_them(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
+        block = _pcm_block("SvdW-DROP", "water", incore_mb=1000)
         assert f"DROPParameters(nleb={DROP_NLEB}, wleb_prune_level={DROP_PRUNE_LEVEL})" in block
 
-    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
+    @pytest.mark.parametrize("model", ["SvdW-DROP", "rho-DROP"])
     def test_is_python_on_the_switching_cavitys_spheres(self, model: str) -> None:
         # never MOIST's own radii: the same table as the switching/Gaussian cavity's
         block = _pcm_block(model, "water", incore_mb=1000)
@@ -133,17 +116,17 @@ class TestMoistBlock:
         assert "radii=moist." not in block
 
     def test_hydrogen_radius_sizes_svdw_drops_spheres(self) -> None:
-        block = _pcm_block("IEFPCM/SvdW-DROP", "water", 1.3, incore_mb=1000)
+        block = _pcm_block("SvdW-DROP", "water", 1.3, incore_mb=1000)
         assert "    radii=modified_bondi_radii(hydrogen=1.3),\n" in block
 
     def test_hydrogen_radius_raises_on_rho_drop(self) -> None:
         # as on pyscf_runner: the radii only place the isodensity surface's points
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            _pcm_block("IEFPCM/rho-DROP", "water", 1.3, incore_mb=1000)
+            _pcm_block("rho-DROP", "water", 1.3, incore_mb=1000)
 
     def test_unknown_cavity_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown Psi4 solvent model"):
-            _pcm_block("IEFPCM/sphere-DROP", "water", incore_mb=1000)
+        with pytest.raises(ValueError, match="Unknown cavity"):
+            _pcm_block("sphere-DROP", "water", incore_mb=1000)
 
     def test_enabled_before_every_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
         inputs: list[str] = []
@@ -155,7 +138,7 @@ class TestMoistBlock:
             return "=== FINAL ENERGY: -1.000000000000 ===\n=== CONVERGED: 1 ===\n"
 
         monkeypatch.setattr(psi4_runner, "_run_psi4", fake_run)
-        solvated = ("PBE0", "def2-SVP", "IEFPCM/SvdW-DROP", "water")
+        solvated = ("PBE0", "def2-SVP", "SvdW-DROP", "water")
         psi4_runner.single_point(_water(), 0, *solvated)
         psi4_runner.optimize(_water(), 0, *solvated)
         psi4_runner.frequencies(_water(), 0, *solvated)
@@ -373,7 +356,7 @@ class TestMemorySplit:
         psi4_runner.frequencies(_water(), 0, *job, memory_gb=12.0)
         return runs
 
-    @pytest.mark.parametrize("model", ["IEFPCM", "CPCM/rho-DROP"])
+    @pytest.mark.parametrize("model", ["ISWIG", "rho-DROP"])
     def test_solvated_jobs_split_it(self, monkeypatch: pytest.MonkeyPatch, model: str) -> None:
         store_gb = 12.0 * PCM_STORE_FRACTION
         for text, psi4_gb in self._jobs(monkeypatch, model):
@@ -456,7 +439,7 @@ class TestPsi4Executable:
         psi4_runner.check_installed(drop=True)
         checked = (tmp_path / "checked.dat").read_text()
         assert "import moist\n" in checked
-        assert checked in _pcm_block("IEFPCM/SvdW-DROP", "water", incore_mb=1000)
+        assert checked in _pcm_block("SvdW-DROP", "water", incore_mb=1000)
 
     def test_stages_on_a_drop_model_check_for_moist(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tautomator.config import RefinementConfig, Solvation
@@ -466,13 +449,13 @@ class TestPsi4Executable:
         monkeypatch.setattr(
             psi4_runner, "check_installed", lambda drop=False: checked.append(drop)
         )
-        drop, pcm = "IEFPCM/SvdW-DROP", "IEFPCM"
+        drop, pcm = "SvdW-DROP", "ISWIG"
         runs: list[tuple[str, Solvation]] = [(drop, "optimize"), (drop, "none"), (pcm, "optimize")]
         for model, solvation in runs:
             config = RefinementConfig(
                 method="PBE0", basis="def2-SVP", solvation=solvation, engine="psi4"
             )
-            refinement.refine(Ensemble("O"), config, driver="psi4", solvent_model=model)
+            refinement.refine(Ensemble("O"), config, driver="psi4", cavity=model)
         scoring.score(Ensemble("O"), "psi4", "PBE0", "def2-SVP", drop, "water")
         scoring.score(Ensemble("O"), "psi4", "PBE0", "def2-SVP")
         # Once per stage, for the Psi4 that both optimizes and adds solvation; a gas-phase
@@ -541,7 +524,7 @@ def test_solvation_energy_matches_pyscf(isolated_tmpdir: Path) -> None:
     level = ("PBE0", "def2-SVP")
     solvation = {}
     for name, driver in (("psi4", psi4_runner), ("pyscf", pyscf_runner)):
-        e_pcm = driver.single_point(_formate(), -1, *level, "IEFPCM", "water", threads=4)
+        e_pcm = driver.single_point(_formate(), -1, *level, "ISWIG", "water", threads=4)
         e_gas = driver.single_point(_formate(), -1, *level, threads=4)
         solvation[name] = (e_pcm - e_gas) * 627.509474
     assert solvation["psi4"] < -60.0  # an anion in water
@@ -553,7 +536,7 @@ def test_solvation_energy_matches_pyscf(isolated_tmpdir: Path) -> None:
 def test_optimizes_and_takes_frequencies_in_solvent(isolated_tmpdir: Path) -> None:
     """Analytical PCM gradients: optking minimizes in solvent, frequencies are real."""
     _require_psi4()
-    solvated = ("HF", "def2-SVP", "IEFPCM", "water")
+    solvated = ("HF", "def2-SVP", "ISWIG", "water")
     start = psi4_runner.single_point(_water(), 0, *solvated, threads=4)
     geom, energy, converged = psi4_runner.optimize(_water(), 0, *solvated, threads=4)
     assert converged
@@ -574,11 +557,11 @@ def _require_psi4_with_moist() -> None:
     ("model", "basis", "tolerance"),
     [
         # measured < 5e-9 kcal/mol
-        ("IEFPCM/SvdW-DROP", "def2-SVP", 1e-6),
-        ("CPCM/rho-DROP", "def2-SVP", 1e-6),
+        ("SvdW-DROP", "def2-SVP", 1e-6),
+        ("rho-DROP", "def2-SVP", 1e-6),
         # vDZP's ECPs: the two codes' ECP integrals put the gas-phase energies 2e-4 kcal/mol
         # apart, the solvation energies 3e-6 (the ECP-reduced charges and rho-DROP's core fill)
-        ("IEFPCM/rho-DROP", "vDZP", 2e-5),
+        ("rho-DROP", "vDZP", 2e-5),
     ],
 )
 def test_drop_solvation_energy_matches_pyscf(
@@ -608,7 +591,7 @@ def test_optimizes_and_takes_frequencies_on_a_drop_cavity(isolated_tmpdir: Path)
     """MOIST's analytical gradients: optking minimizes on SvdW-DROP, and the frequencies
     (finite differences of those gradients; PySCF has none on MOIST) are real."""
     _require_psi4_with_moist()
-    solvated = ("HF", "def2-SVP", "IEFPCM/SvdW-DROP", "water")
+    solvated = ("HF", "def2-SVP", "SvdW-DROP", "water")
     start = psi4_runner.single_point(_water(), 0, *solvated, threads=4)
     geom, energy, converged = psi4_runner.optimize(_water(), 0, *solvated, threads=4)
     assert converged

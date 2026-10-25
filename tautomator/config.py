@@ -153,37 +153,42 @@ COMPOSITE_BASIS: dict[str, str] = {
 # is supported for now"); Psi4 has all five.
 PYSCF_COMPOSITES = {"wb97x-3c"}
 
-# The analytical PCM models: user-facing name ([scoring] solvent_model) -> the
-# name both drivers' solvers take.  Both drivers run the same switching/Gaussian
-# PCM: PySCF its own pyscf.solvent.pcm, Psi4 psi4-swig-pcm, which reproduces it
-# (same surface, radii and discretization; Hartree-Fock solvation energies agree
-# to 1e-9 Eh and gradients to 5e-8 Eh/bohr) and adds analytical gradients to Psi4.
-PCM_METHODS: dict[str, str] = {
-    "PCM": "IEF-PCM",
-    "IEFPCM": "IEF-PCM",
-    "CPCM": "C-PCM",
-    "COSMO": "COSMO",
-}
+# The one implicit-solvent model, on both drivers and every cavity: IEF-PCM.  The
+# nonelectrostatic correction is fitted on one electrostatic model, so the model is not a
+# setting.  SS(V)PE (IEF-PCM with the system matrix symmetrized) is not used: on the
+# switching/Gaussian surface that moved the solvation energy of acetate and
+# methylammonium by 2.7 and 4.2 kcal/mol and did not converge with the surface grid (the
+# ill behaviour Lange & Herbert describe, Chem. Phys. Lett. 509, 77).
+PCM_METHOD = "IEF-PCM"
 
-# MOIST's DROP cavities, for the same PCM models: a solvent model "<model>/<cavity>",
-# e.g. "IEFPCM/SvdW-DROP".  SvdW-DROP is a smooth solvent-excluded-like surface over
-# the same spheres as PySCF's cavity (pcm_radii), rho-DROP the electron isodensity
-# surface (rho_iso = 1e-3 e/bohr^3), which follows the density through the SCF.  On the
-# pyscf driver they run through tautomator.pyscf_moist, on the psi4 driver through
-# psi4-swig-pcm's MOIST host; both the default and the psi4 environment have MOIST.  A
-# cavity has one name, written exactly as here: no other case, spelling or alias is taken
-# for it.
+# The cavities IEF-PCM runs on ([scoring] cavity), each with one name, written exactly as
+# here: no other case, spelling or alias is taken for it.
+# - "SvdW-DROP" (MOIST): a smooth solvent-excluded-like surface over the same spheres as
+#   PySCF's cavity (pcm_radii).
+# - "rho-DROP" (MOIST): the electron isodensity surface (rho_iso = 1e-3 e/bohr^3), which
+#   follows the density through the SCF.
+# - "ISWIG": PySCF's switching/Gaussian cavity, the spheres themselves with ISWIG switching
+#   (PCM_SWITCHING).  PySCF runs it as pyscf.solvent.pcm (tautomator.pyscf_fast_pcm), Psi4
+#   as psi4-swig-pcm, which reproduces it (same surface, radii and discretization;
+#   Hartree-Fock solvation energies agree to 1e-9 Eh and gradients to 5e-8 Eh/bohr) and adds
+#   analytical gradients to Psi4.
+# On the pyscf driver the DROP cavities run through tautomator.pyscf_moist, on the psi4
+# driver through psi4-swig-pcm's MOIST host; both the default and the psi4 environment have
+# MOIST.
 DROP_CAVITIES: tuple[str, ...] = ("SvdW-DROP", "rho-DROP")
+CAVITIES: tuple[str, ...] = (*DROP_CAVITIES, "ISWIG")
+
+#: The cavity of both drivers by default: SvdW-DROP, more accurate per surface point than
+#: the switching/Gaussian spheres (with as many points as PySCF's Lebedev order 29, the
+#: worst ion error in the PCM energy over the 42-solute set is 0.13 kcal/mol, against 0.19
+#: on the spheres), and the nonelectrostatic correction runs on it with its gradients
+#: (docs/nonelectrostatic.md).  DROP_NLEB gives it twice those points.
+DEFAULT_CAVITY = "SvdW-DROP"
 
 # The MOIST classes both drivers build a DROP model from: each cavity's level-set function
-# (moist.DROP(lsf=moist.SvdW(), ...)) and each PCM method's component
-# (moist.ModelComponentIEFPCM(eps)).  Every name in DROP_CAVITIES and PCM_METHODS has one.
+# (moist.DROP(lsf=moist.SvdW(), ...)) and IEF-PCM's component (moist.ModelComponentIEFPCM).
 DROP_LSF: dict[str, str] = {"SvdW-DROP": "SvdW", "rho-DROP": "Isodensity"}
-DROP_COMPONENTS: dict[str, str] = {
-    "IEF-PCM": "ModelComponentIEFPCM",
-    "C-PCM": "ModelComponentCPCM",
-    "COSMO": "ModelComponentCOSMO",
-}
+DROP_COMPONENT = "ModelComponentIEFPCM"
 
 #: MOIST's Lebedev points per sphere for the DROP cavities (DROPParameters.nleb), on both
 #: drivers.  MOIST's default, 194, puts the IEF-PCM energy within 0.1 kcal/mol or 1e-3 of
@@ -229,21 +234,6 @@ def pcm_radii(hydrogen_radius: float = 1.1) -> NDArray[np.float64]:
     return PCM_VDW_SCALE * radii
 
 
-def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
-    """(PCM method, MOIST cavity name) of a "<model>/<cavity>" solvent model, else None.
-
-    The PCM model takes the spellings it takes on PySCF's cavity (IEFPCM, IEF-PCM, PCM,
-    ...); the cavity must be one of DROP_CAVITIES exactly.
-    """
-    if model is None:
-        return None
-    pcm, sep, cavity = model.partition("/")
-    pcm = pcm.upper().replace("-", "")
-    if sep and pcm in PCM_METHODS and cavity in DROP_CAVITIES:
-        return PCM_METHODS[pcm], cavity
-    return None
-
-
 # The switching function both drivers' PCM surfaces use (PySCF's
 # surface_discretization_method, psi4-swig-pcm's PCMSettings.switching).  ISWIG
 # (PySCF 2.13 and later) fades buried points out with an erf over each Gaussian's
@@ -254,28 +244,6 @@ def drop_solvent_model(model: str | None) -> tuple[str, str] | None:
 # memory_gb on SWIG can spill on ISWIG, and its SCF then runs at stock PCM speed
 # (aspirin anion, def2-TZVPPD, memory_gb = 8: 3.7 GB fit, 4.2 GB did not; 1.8x).
 PCM_SWITCHING = "ISWIG"
-
-# Implicit-solvent models, by the driver that can run them.  One model is used
-# for every solvation energy in a run, so the refinement filter ranks on the
-# same physics scoring does.  Both drivers default to IEF-PCM on SvdW-DROP
-# (_DEFAULT_SOLVENT_MODEL); "IEFPCM" alone is PySCF's switching/Gaussian cavity.  SS(V)PE is not
-# offered: it symmetrizes the system matrix, and on this surface that moved the
-# solvation energy of acetate and methylammonium by 2.7 and 4.2 kcal/mol and did
-# not converge with the surface grid (the ill behaviour Lange & Herbert
-# describe, Chem. Phys. Lett. 509, 77).
-_SOLVENT_MODELS: dict[str, set[str]] = {
-    "pyscf": {
-        *PCM_METHODS,
-        "SMD",
-        "DDPCM",
-        "DDCOSMO",
-        *(f"{pcm}/{cavity}" for pcm in PCM_METHODS for cavity in DROP_CAVITIES),
-    },
-    "psi4": {
-        *PCM_METHODS,
-        *(f"{pcm}/{cavity}" for pcm in PCM_METHODS for cavity in DROP_CAVITIES),
-    },
-}
 
 # Dielectric constants for the PCM models, by lower-case solvent name; both
 # drivers take them from here.  The name also goes to xtb's and CREST's --alpb
@@ -394,7 +362,7 @@ class MoleculeConfig:
     charge_min: int = -1
     charge_max: int = 0
     # Used by sampling (ALPB), refinement and scoring.  A run scored in the gas
-    # phase ([scoring] solvent_model = "none") uses no solvent anywhere.
+    # phase ([scoring] cavity = "none") uses no solvent anywhere.
     solvent: str = "water"
 
     @property
@@ -446,7 +414,10 @@ class RefinementConfig:
 class ScoringConfig:
     method: str = ""
     basis: str = ""
-    solvent_model: str | None = None  # the run's implicit-solvent model
+    # The cavity of the run's implicit solvent (IEF-PCM, PCM_METHOD) for every solvation
+    # energy, refinement's too, so the refinement filter ranks on the physics scoring does:
+    # one of CAVITIES, or None for a gas-phase run ("none" in the file).
+    cavity: str | None = None
     ewin: float = 10.0
     pcm_hydrogen_radius: float = 1.1  # PCM cavity radius (Angstrom) for hydrogen
 
@@ -479,7 +450,7 @@ class PkaConfig:
                     if ref.engine == "orbmol"
                     else f"{ref.method}/{ref.basis}"
                 ),
-                "model": sc.solvent_model,
+                "cavity": sc.cavity,
                 "driver": self.compute.driver,
             }
         return {
@@ -498,7 +469,7 @@ class PkaConfig:
                 "driver": self.compute.driver,
                 "method": sc.method,
                 "basis": sc.basis,
-                "solvent_model": sc.solvent_model,
+                "cavity": sc.cavity,
                 "ewin": sc.ewin,
             },
         }
@@ -538,12 +509,6 @@ PROTOCOLS: dict[str, dict[str, dict[str, Any]]] = {
 
 _DFT_REFINEMENT_DEFAULT_METHOD = "wB97X-3c"
 _SCORING_DEFAULTS = {"method": "wB97M-V", "basis": "def2-QZVPPD"}
-# IEF-PCM on MOIST's SvdW-DROP cavity, on both drivers: a smooth solvent-excluded-like surface,
-# more accurate per surface point than the switching/Gaussian spheres (with as many points as
-# PySCF's Lebedev order 29, the worst ion error in the PCM energy over the 42-solute set is
-# 0.13 kcal/mol, against 0.19 on the spheres), and the nonelectrostatic correction runs on it
-# with its gradients (docs/nonelectrostatic.md).  DROP_NLEB gives it twice those points.
-_DEFAULT_SOLVENT_MODEL = {"pyscf": "IEFPCM/SvdW-DROP", "psi4": "IEFPCM/SvdW-DROP"}
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +616,7 @@ def load_config(path: Path) -> PkaConfig:
                 "set charge_min = charge_max to it"
             )
 
-    scoring = _build_scoring(score_raw, compute.driver)
+    scoring = _build_scoring(score_raw)
     refinement = _build_refinement(ref_raw, compute.driver, scoring)
     _validate(refinement, scoring, compute)
     _warn_no_diffuse(scoring)
@@ -666,15 +631,15 @@ def load_config(path: Path) -> PkaConfig:
     )
 
 
-def _build_scoring(raw: dict[str, Any], driver: str) -> ScoringConfig:
-    model = raw.get("solvent_model", _DEFAULT_SOLVENT_MODEL[driver])
-    if isinstance(model, str) and model.lower() == "none":
-        model = None
+def _build_scoring(raw: dict[str, Any]) -> ScoringConfig:
+    cavity = raw.get("cavity", DEFAULT_CAVITY)
+    if isinstance(cavity, str) and cavity.lower() == "none":
+        cavity = None
     method = raw.get("method", _SCORING_DEFAULTS["method"])
     return ScoringConfig(
         method=method,
         basis=raw.get("basis", _default_basis(method) or _SCORING_DEFAULTS["basis"]),
-        solvent_model=model,
+        cavity=cavity,
         ewin=raw.get("ewin", 10.0),
         pcm_hydrogen_radius=raw.get("pcm_hydrogen_radius", 1.1),
     )
@@ -711,7 +676,7 @@ def _default_basis(method: str) -> str:
 
 
 def _default_solvation(engine: str, scoring: ScoringConfig) -> Solvation:
-    if scoring.solvent_model is None:
+    if scoring.cavity is None:
         return "none"  # gas-phase scoring: the filter must rank on gas energies too
     # Both DFT drivers have analytical PCM gradients, so they minimize in solvent;
     # OrbMol has no implicit solvent at all.
@@ -757,14 +722,14 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
                 "refinement level, reusing the optimizer's gas-phase energy."
             )
 
-    if ref.solvation != "none" and scoring.solvent_model is None:
+    if ref.solvation != "none" and scoring.cavity is None:
         raise ValueError(
             "[refinement] computes a solvation energy but [scoring] is gas-phase "
-            "(solvent_model = 'none'); the refinement filter would rank on different "
+            "(cavity = 'none'); the refinement filter would rank on different "
             "physics from scoring. Set [refinement] solvation = 'none', or give "
-            "[scoring] a solvent model."
+            "[scoring] a cavity."
         )
-    if ref.solvation == "none" and scoring.solvent_model is not None:
+    if ref.solvation == "none" and scoring.cavity is not None:
         log.warning(
             "[refinement] solvation = 'none' with solvated scoring: conformers are "
             "filtered on gas-phase energies, which rerank against scoring (a 4 kcal/mol "
@@ -772,16 +737,13 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
             "solvation = 'single_point'."
         )
 
-    if scoring.solvent_model is not None:
-        allowed = _SOLVENT_MODELS[compute.driver]
-        # the PCM part normalized as on PySCF's cavity, a DROP cavity as spelled
-        pcm, sep, cavity = scoring.solvent_model.partition("/")
-        if pcm.upper().replace("-", "") + sep + cavity not in allowed:
+    if scoring.cavity is not None:
+        if scoring.cavity not in CAVITIES:
             raise ValueError(
-                f"[scoring] solvent_model = {scoring.solvent_model!r} is not available "
-                f"on the {compute.driver} driver (has: {_spelled(allowed)})."
+                f"[scoring] cavity = {scoring.cavity!r} is not a cavity: "
+                f"{', '.join(CAVITIES)}, or 'none' for the gas phase (each as spelled here)."
             )
-        if drop_solvent_model(scoring.solvent_model) is not None:
+        if scoring.cavity in DROP_CAVITIES:
             _validate_drop(ref, scoring, compute.driver)
 
     _validate_prefilter(ref)
@@ -795,54 +757,41 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
         )
 
 
-def _spelled(models: set[str]) -> str:
-    """Solvent model names as the README spells them, DROP cavities by their pattern."""
-    plain = sorted(m for m in models if "/" not in m)
-    if any("/" in m for m in models):
-        cavities = list(DROP_CAVITIES)
-        pcm = "/".join(m for m in plain if m in PCM_METHODS and m != "PCM")
-        plain.append(f"<{pcm}>/<{' or '.join(cavities)}> (e.g. IEFPCM/SvdW-DROP)")
-    return ", ".join(plain)
-
-
 def _validate_drop(ref: RefinementConfig, scoring: ScoringConfig, driver: str) -> None:
-    """What a MOIST DROP cavity (solvent_model "<model>/<cavity>") cannot do."""
+    """What a MOIST DROP cavity cannot do."""
     import importlib.util
 
-    model = scoring.solvent_model
+    cavity = scoring.cavity
     # On the psi4 driver MOIST is imported by Psi4, in its own environment, which
     # psi4_runner.check_installed(drop=True) checks for when the run picks its driver.
     if driver == "pyscf" and importlib.util.find_spec("moist") is None:
         raise ValueError(
-            f"[scoring] solvent_model = {model!r} needs MOIST, which this environment does "
+            f"[scoring] cavity = {cavity!r} needs MOIST, which this environment does "
             "not have: the default pixi environment has it (`pixi install`; the first "
             "install compiles MOIST)."
         )
-    drop = drop_solvent_model(model)
     for name, radius in (
         ("[scoring]", scoring.pcm_hydrogen_radius),
         ("[refinement]", ref.pcm_hydrogen_radius),
     ):
-        if drop is not None and drop[1] == "rho-DROP" and radius != 1.1:
+        if cavity == "rho-DROP" and radius != 1.1:
             raise ValueError(
                 f"{name} pcm_hydrogen_radius = {radius} would change nothing on "
-                f"solvent_model = {model!r}: rho-DROP's surface is the density's contour, "
-                "and the radii only place its points. Remove it, or use SvdW-DROP or PySCF's "
-                "cavity, whose spheres it sizes."
+                f"cavity = {cavity!r}: rho-DROP's surface is the density's contour, and "
+                "the radii only place its points. Remove it, or use SvdW-DROP or ISWIG, "
+                "whose spheres it sizes."
             )
     # Psi4 takes its frequencies as finite differences of analytical gradients, which
     # MOIST has; PySCF's are analytical Hessians, which MOIST does not have.
     if ref.rrho == "refinement" and ref.solvation == "optimize" and ref.engine == "pyscf":
         default = (
-            ", the default solvent model since SvdW-DROP replaced PySCF's cavity"
-            if model == _DEFAULT_SOLVENT_MODEL["pyscf"]
-            else ""
+            ", the default cavity since it replaced PySCF's" if cavity == DEFAULT_CAVITY else ""
         )
         raise ValueError(
             f"[refinement] rrho = 'refinement' with solvation = 'optimize' needs a Hessian "
-            f"in solvent, and MOIST's PCM ({model!r}{default}) has none on the pyscf "
-            "driver. Use rrho = 'xtb'; solvent_model = 'IEFPCM' (PySCF's own cavity, which "
-            "has one); or the psi4 driver (finite differences of gradients)."
+            f"in solvent, and MOIST's PCM on {cavity!r}{default} has none on the pyscf "
+            "driver. Use rrho = 'xtb'; [scoring] cavity = 'ISWIG' (PySCF's own cavity, "
+            "which has one); or the psi4 driver (finite differences of gradients)."
         )
 
 
@@ -1022,6 +971,29 @@ def _hint(key: str, allowed: frozenset[str], section: str | None = None) -> str:
     return f" (did you mean {close[0]!r}?)" if close else ""
 
 
+def _cavity_of_solvent_model(model: Any) -> str:
+    """The cavity an old [scoring] solvent_model means, or a ValueError if it named a model
+    tautomator no longer runs ("none" stays "none", the gas phase)."""
+    text = str(model)
+    if text.lower() == "none":
+        return "none"
+    pcm, sep, cavity = text.partition("/")
+    if pcm.upper().replace("-", "") not in ("IEFPCM", "PCM"):
+        raise ValueError(
+            f"[scoring] solvent_model = {model!r}: tautomator runs IEF-PCM only (C-PCM, "
+            "COSMO, SMD and PySCF's ddCOSMO and ddPCM are gone). Set [scoring] cavity to "
+            f"one of {', '.join(CAVITIES)} instead."
+        )
+    if not sep:
+        return "ISWIG"  # "IEFPCM" alone was PySCF's switching/Gaussian cavity
+    if cavity not in DROP_CAVITIES:
+        raise ValueError(
+            f"[scoring] solvent_model = {model!r}: {cavity!r} is not a DROP cavity "
+            f"({' or '.join(DROP_CAVITIES)}). Set [scoring] cavity instead."
+        )
+    return cavity
+
+
 def _fit_preset_solvation(
     ref_raw: dict[str, Any], own: dict[str, Any], score_raw: dict[str, Any]
 ) -> None:
@@ -1034,8 +1006,8 @@ def _fit_preset_solvation(
     TOML cannot unset a preset's key, so without this a preset could not be run
     gas-phase at all.  Anything written in the file still wins.
     """
-    model = score_raw.get("solvent_model")
-    gas_scoring = isinstance(model, str) and model.lower() == "none"
+    cavity = score_raw.get("cavity")
+    gas_scoring = isinstance(cavity, str) and cavity.lower() == "none"
     if gas_scoring and "solvation" not in own:
         ref_raw.pop("solvation", None)
     single_point = ref_raw.get("solvation", "single_point") == "single_point"
@@ -1074,8 +1046,19 @@ def _migrate(
         score_raw.setdefault("solvent_model", model)
         log.warning(
             f"[refinement] solvent_model = {model!r} is deprecated: [refinement] "
-            "solvation says how solvation enters refinement, and [scoring] "
-            "solvent_model is the model for the whole run."
+            "solvation says how solvation enters refinement, and [scoring] cavity "
+            "is the cavity for the whole run."
+        )
+    if (model := score_raw.pop("solvent_model", None)) is not None:
+        cavity = _cavity_of_solvent_model(model)
+        if score_raw.setdefault("cavity", cavity) != cavity:
+            raise ValueError(
+                f"[scoring] solvent_model = {model!r} conflicts with [scoring] cavity = "
+                f"{score_raw['cavity']!r}; remove solvent_model."
+            )
+        log.warning(
+            f"[scoring] solvent_model = {model!r} is deprecated: IEF-PCM is the only "
+            f"model, and [scoring] cavity = {cavity!r} says which cavity it runs on."
         )
     for name, sec in (("refinement", ref_raw), ("scoring", score_raw)):
         if (solvent := sec.pop("solvent", None)) is not None:

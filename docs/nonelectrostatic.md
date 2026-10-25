@@ -66,7 +66,7 @@ from tautomator.config import solvent_electron_density
 from tautomator.pyscf_nonelectrostatic import solute_from_mf
 from tautomator.pyscf_runner import _build_mf
 
-_mol, mf = _build_mf(geom, charge, "wB97M-V", "def2-QZVPPD", "IEFPCM", "water")
+_mol, mf = _build_mf(geom, charge, "wB97M-V", "def2-QZVPPD", "ISWIG", "water")
 mf.kernel()
 d = nonelectrostatic.descriptors(solute_from_mf(mf), solvent_electron_density("water"))
 
@@ -250,21 +250,19 @@ correction is applied after the SCF, so this costs no quantum chemistry.
 
 They are not part of the config schema: the fit is a one-time job, and
 `scripts/run_mnsol_set.py` asks for them through `run_pipeline(...,
-descriptors=[...])` (PySCF, with IEF-PCM, C-PCM or COSMO on PySCF's cavity or a
-DROP cavity). Scoring then reads the descriptors off each conformer's solvated
+descriptors=[...])` (PySCF, in IEF-PCM on any cavity). Scoring then reads the descriptors off each conformer's solvated
 single point and writes `<output_dir>/nonelectrostatic.npz`. The file holds
 every conformer scored in solution, the ones scoring's energy window then drops
 included, since the correction can bring one of them back into the window. The
 ensemble.json beside it has only those the window kept.
 
-Each further model in `descriptors` (run_mnsol_set.py's default: `IEFPCM` on
-PySCF's cavity and `IEFPCM/rho-DROP`, beside its own `IEFPCM/SvdW-DROP`) adds
-one more solvated single point per conformer at the same geometry, written to a
-file of its own (`descriptor_file(model)`, e.g.
-`nonelectrostatic_iefpcm_rhodrop.npz`) with the same gas-phase energy and RRHO,
-that model's PCM energy and descriptors, and in its settings the model the
-geometries came from (`geometry_solvent_model`) and any conformer that failed
-there (`failed`). A fit can then choose its cavity without rerunning anything.
+Each further cavity in `descriptors` (run_mnsol_set.py's default: `rho-DROP`
+and `ISWIG`, PySCF's cavity, beside its own `SvdW-DROP`) adds one more solvated
+single point per conformer at the same geometry, written to a file of its own
+(`descriptor_file(cavity)`, e.g. `nonelectrostatic_rhodrop.npz`) with the same
+gas-phase energy and RRHO, that cavity's PCM energy and descriptors, and in its
+settings the cavity the geometries came from (`geometry_cavity`) and any
+conformer that failed there (`failed`). A fit can then choose its cavity without rerunning anything.
 
 ```python
 from tautomator.nonelectrostatic import load_descriptors
@@ -368,8 +366,8 @@ self-consistent model would have to be fitted self-consistently.
 ## On MOIST's DROP cavities
 
 The same three terms on the surface MOIST builds for its PCM
-(`solvent_model = "<model>/SvdW-DROP"` or `"<model>/rho-DROP"`; the README has
-the cavities), both models, with analytical gradients, on PySCF and Psi4. Both
+(`[scoring] cavity = "SvdW-DROP"` or `"rho-DROP"`; the README has the
+cavities), both models, with analytical gradients, on PySCF and Psi4. Both
 cavities are built on PySCF's cavity's spheres (`config.pcm_radii`), not on
 MOIST's own radii; every number below is on them. A DROP surface is a set of
 points s_i with outward normals n_i and areas a_i,
@@ -428,7 +426,7 @@ post-SCF G does, and its finite differences divide it by the step. The
 finite-difference tests use MOIST's dense solver.
 
 **Descriptors.** `drop_descriptors` (and scoring with descriptors on a DROP
-model) gives the same `Descriptors`:
+cavity) gives the same `Descriptors`:
 per surface point the area, the solute's normal field, the PCM's apparent
 surface charge recast as a field (its correlation with the normal field is 0.97
 on formate) and the atom whose sphere the point was projected from. The charges
@@ -437,8 +435,8 @@ publishes them), as PySCF's cavity uses its own: not the potential adjoint
 w_phi MOIST hands the host, which for IEF-PCM is the symmetrized adjoint and
 differs from q: by 0.04% RMS (0.1% at most) on SvdW-DROP for formate, and on
 PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
-methylammonium, water). C-PCM and COSMO are stationary, so there the two are
-equal. The file's settings name the charges (`charge_field`) and record the
+methylammonium, water). (For C-PCM and COSMO, which tautomator does not run,
+the two are equal.) The file's settings name the charges (`charge_field`) and record the
 cavity, its spheres (`drop_radii`: PySCF's cavity's, with `pcm_hydrogen_radius`;
 a file without the key is from before, on MOIST's own CPCM radii), MOIST's grid
 and pruning level (`drop_nleb`, `drop_prune_level`) and the quadrature

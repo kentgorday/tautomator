@@ -40,10 +40,10 @@ def fake_pyscf(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def solvated(geom: Geometry, *args: Any, **kwargs: Any) -> tuple[float, Descriptors]:
         x = geom.coords[0, 0]
-        model = args[3]
-        if x == 9.0 or (model == "IEFPCM/rho-DROP" and x == 0.1):
+        cavity = args[3]
+        if x == 9.0 or (cavity == "rho-DROP" and x == 0.1):
             raise RuntimeError("SCF did not converge")
-        shift = {"IEFPCM": 0.01, "CPCM": 0.015, "IEFPCM/rho-DROP": 0.02}[model]
+        shift = {"ISWIG": 0.01, "SvdW-DROP": 0.015, "rho-DROP": 0.02}[cavity]
         return gas(geom) - shift, _descriptors(x + shift - 0.01)
 
     monkeypatch.setattr(pyscf_runner, "single_point", gas)
@@ -65,7 +65,7 @@ class TestDescriptorCapture:
     def test_saves_every_conformer_scored_in_solution(self, tmp_path: Path) -> None:
         ens = _ensemble()
         path = tmp_path / "nonelectrostatic.npz"
-        score(ens, "pyscf", "hf", "sto-3g", "IEFPCM", "water", ewin=10.0, descriptors_dir=tmp_path)
+        score(ens, "pyscf", "hf", "sto-3g", "ISWIG", "water", ewin=10.0, descriptors_dir=tmp_path)
         # the window keeps the two low conformers; the file has the high one too
         kept = ens.charge_states[0].microstates[0].conformers
         assert [c.geometry.coords[0, 0] for c in kept] == [0.0, 0.1]
@@ -85,7 +85,7 @@ class TestDescriptorCapture:
     def test_energies_match_the_ensemble(self, tmp_path: Path) -> None:
         ens = _ensemble()
         path = tmp_path / "nonelectrostatic.npz"
-        score(ens, "pyscf", "hf", "sto-3g", "IEFPCM", "water", descriptors_dir=tmp_path)
+        score(ens, "pyscf", "hf", "sto-3g", "ISWIG", "water", descriptors_dir=tmp_path)
         saved, _settings = load_descriptors(path)
         for kept, record in zip(
             ens.charge_states[0].microstates[0].conformers, saved, strict=False
@@ -94,13 +94,13 @@ class TestDescriptorCapture:
 
     def test_without_a_path_nothing_is_saved(self, tmp_path: Path) -> None:
         ens = _ensemble()
-        score(ens, "pyscf", "hf", "sto-3g", "IEFPCM", "water")
+        score(ens, "pyscf", "hf", "sto-3g", "ISWIG", "water")
         assert not list(tmp_path.iterdir())
         assert len(ens.charge_states[0].microstates[0].conformers) == 2
 
-    @pytest.mark.parametrize(("driver", "model"), [("psi4", "IEFPCM"), ("pyscf", None)])
+    @pytest.mark.parametrize(("driver", "cavity"), [("psi4", "ISWIG"), ("pyscf", None)])
     def test_needs_solvated_pyscf(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, driver: str, model: str | None
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, driver: str, cavity: str | None
     ) -> None:
         from tautomator import psi4_runner
 
@@ -111,13 +111,13 @@ class TestDescriptorCapture:
                 driver,
                 "hf",
                 "sto-3g",
-                model,
+                cavity,
                 "water",
                 descriptors_dir=tmp_path,
             )
 
-    def test_further_models_get_files_of_their_own(self, tmp_path: Path) -> None:
-        """Each further model's PCM energy and descriptors, at the run's geometries, in its
+    def test_further_cavities_get_files_of_their_own(self, tmp_path: Path) -> None:
+        """Each further cavity's PCM energy and descriptors, at the run's geometries, in its
         own file; a conformer that fails there is left out of that file only."""
         ens = _ensemble()
         score(
@@ -125,33 +125,35 @@ class TestDescriptorCapture:
             "pyscf",
             "hf",
             "sto-3g",
-            "IEFPCM",
+            "ISWIG",
             "water",
             descriptors_dir=tmp_path,
-            descriptor_models=("CPCM", "IEFPCM/rho-DROP"),
+            descriptor_cavities=("SvdW-DROP", "rho-DROP"),
         )
-        # the run itself is the run's model's: rho-DROP's failure drops nothing
+        # the run itself is the run's cavity's: rho-DROP's failure drops nothing
         kept = ens.charge_states[0].microstates[0].conformers
         assert [c.geometry.coords[0, 0] for c in kept] == [0.0, 0.1]
         main, main_settings = load_descriptors(tmp_path / descriptor_file())
-        assert main_settings["descriptor_models"] == ["CPCM", "IEFPCM/rho-DROP"]
-        cpcm, cpcm_settings = load_descriptors(tmp_path / descriptor_file("CPCM"))
-        rho, rho_settings = load_descriptors(tmp_path / descriptor_file("IEFPCM/rho-DROP"))
-        assert (cpcm_settings["solvent_model"], cpcm_settings["geometry_solvent_model"]) == (
-            "CPCM",
-            "IEFPCM",
+        assert main_settings["descriptor_cavities"] == ["SvdW-DROP", "rho-DROP"]
+        assert (main_settings["pcm"], main_settings["cavity"]) == ("IEF-PCM", "ISWIG")
+        svdw, svdw_settings = load_descriptors(tmp_path / descriptor_file("SvdW-DROP"))
+        rho, rho_settings = load_descriptors(tmp_path / descriptor_file("rho-DROP"))
+        assert (svdw_settings["cavity"], svdw_settings["geometry_cavity"]) == (
+            "SvdW-DROP",
+            "ISWIG",
         )
-        assert cpcm_settings["failed"] == []
-        assert [c.geometry.coords[0, 0] for c in cpcm] == [0.0, 0.1, 5.0]
+        assert svdw_settings["failed"] == []
+        assert [c.geometry.coords[0, 0] for c in svdw] == [0.0, 0.1, 5.0]
         assert [c.geometry.coords[0, 0] for c in rho] == [0.0, 5.0]
         assert [f["geometry"][0][0] for f in rho_settings["failed"]] == [0.1]
-        assert rho_settings["cavity"] == "rho-DROP"
-        for a, b in zip(main, cpcm, strict=True):
+        assert rho_settings["drop_nleb"] == 434
+        for a, b in zip(main, svdw, strict=True):
             assert b.electronic_energy == a.electronic_energy  # one gas-phase single point
             assert b.solvation_energy == pytest.approx(-0.015)
             assert b.descriptors.dispersion == pytest.approx(a.descriptors.dispersion + 0.005)
 
     def test_names_of_the_files(self) -> None:
         assert descriptor_file() == "nonelectrostatic.npz"
-        assert descriptor_file("IEF-PCM/rho-DROP") == "nonelectrostatic_iefpcm_rhodrop.npz"
-        assert descriptor_file("IEFPCM") == "nonelectrostatic_iefpcm.npz"
+        assert descriptor_file("rho-DROP") == "nonelectrostatic_rhodrop.npz"
+        assert descriptor_file("SvdW-DROP") == "nonelectrostatic_svdwdrop.npz"
+        assert descriptor_file("ISWIG") == "nonelectrostatic_iswig.npz"

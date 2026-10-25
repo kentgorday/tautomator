@@ -126,7 +126,7 @@ class TestDftSolvationSinglePoint:
             ewin=100.0,
             engine="pyscf",
         )
-        refinement.refine(ens, cfg, driver="pyscf", solvent_model="IEFPCM")
+        refinement.refine(ens, cfg, driver="pyscf", cavity="ISWIG")
 
         confs = ens.charge_states[0].microstates[0].conformers
         assert len(confs) == 2
@@ -148,7 +148,7 @@ class TestDftSolvationSinglePoint:
             rrho="refinement",
             engine="pyscf",
         )
-        refinement.refine(ens, cfg, driver="pyscf", solvent_model="IEFPCM")
+        refinement.refine(ens, cfg, driver="pyscf", cavity="ISWIG")
 
         ms = ens.charge_states[0].microstates[0]
         assert ms.conformers == []
@@ -178,7 +178,7 @@ class TestOrbmolSolvationSinglePoint:
             rrho="refinement",
             engine="orbmol",
         )
-        refinement.refine(ens, cfg, driver="pyscf", solvent_model="IEFPCM")
+        refinement.refine(ens, cfg, driver="pyscf", cavity="ISWIG")
 
         (conf,) = ens.charge_states[0].microstates[0].conformers
         assert conf.electronic_energy == pytest.approx(-76.40)  # OrbMol's
@@ -228,7 +228,7 @@ class TestGasPrefilter:
             engine="pyscf",
         )
         with caplog.at_level(logging.INFO):
-            refinement.refine(ens, cfg, driver="pyscf", solvent_model="IEFPCM")
+            refinement.refine(ens, cfg, driver="pyscf", cavity="ISWIG")
         return ens, driver
 
     def test_off_by_default_every_conformer_gets_a_single_point(
@@ -276,7 +276,7 @@ class TestSolvatedOptimization:
             rrho="refinement",
             engine="pyscf",
         )
-        refinement.refine(ens, cfg, driver="pyscf", solvent_model="IEFPCM")
+        refinement.refine(ens, cfg, driver="pyscf", cavity="ISWIG")
 
         (conf,) = ens.charge_states[0].microstates[0].conformers
         assert conf.electronic_energy == pytest.approx(-76.40)
@@ -310,15 +310,15 @@ class TestXtbRrhoSolvent:
     would carry part of the solvation free energy it is the reference for."""
 
     @pytest.mark.parametrize(
-        ("solvation", "solvent_model", "expected"),
-        [("optimize", "IEFPCM", "woctanol"), ("none", None, None)],
+        ("solvation", "cavity", "expected"),
+        [("optimize", "ISWIG", "woctanol"), ("none", None, None)],
     )
     def test_follows_the_scoring_phase(
         self,
         patch_drivers: Any,
         monkeypatch: pytest.MonkeyPatch,
         solvation: str,
-        solvent_model: str | None,
+        cavity: str | None,
         expected: str | None,
     ) -> None:
         # Minimizing in solvent also takes the gas-phase energy at the minimum.
@@ -343,6 +343,6 @@ class TestXtbRrhoSolvent:
             cfg,
             driver="pyscf",
             solvent="woctanol",
-            solvent_model=solvent_model,
+            cavity=cavity,
         )
         assert seen == [expected]

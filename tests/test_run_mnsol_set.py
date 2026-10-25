@@ -1,4 +1,4 @@
-"""scripts/run_mnsol_set.py's choice of models (the script itself needs the MNSol set)."""
+"""scripts/run_mnsol_set.py's choice of cavities (the script itself needs the MNSol set)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from types import ModuleType
 
 import pytest
 
-from tautomator.scoring import check_descriptor_models
+from tautomator.config import CAVITIES, DEFAULT_CAVITY
+from tautomator.scoring import check_descriptor_cavities
 
 
 def _script() -> ModuleType:
@@ -20,14 +21,21 @@ def _script() -> ModuleType:
     return module
 
 
-@pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM", "IEF-PCM", "IEFPCM/rho-DROP"])
-def test_default_descriptor_models_leave_out_the_runs_own(model: str) -> None:
-    script = _script()
-    others = script.default_descriptor_models(model)
-    assert len(others) == len(script.CAVITY_MODELS) - 1
-    check_descriptor_models(model, others)  # what run_pipeline would check
+@pytest.mark.parametrize("cavity", CAVITIES)
+def test_default_descriptor_cavities_leave_out_the_runs_own(cavity: str) -> None:
+    others = _script().default_descriptor_cavities(cavity)
+    assert len(others) == len(CAVITIES) - 1
+    check_descriptor_cavities(cavity, others)  # what run_pipeline would check
 
 
 def test_the_default_run_saves_the_other_two_cavities() -> None:
+    assert _script().default_descriptor_cavities(DEFAULT_CAVITY) == ["rho-DROP", "ISWIG"]
+
+
+def test_a_solvent_run_writes_its_cavity_and_a_gas_run_none() -> None:
     script = _script()
-    assert script.default_descriptor_models(script.SOLVENT_MODEL) == ["IEFPCM", "IEFPCM/rho-DROP"]
+    args = ("CCO", 0)
+    water = script.make_toml(*args, "water", Path("out"), "pyscf", 1, 4.0, "fast", "ISWIG")
+    gas = script.make_toml(*args, "gas", Path("out"), "pyscf", 1, 4.0, "fast", "ISWIG")
+    assert 'cavity = "ISWIG"' in water and "solvent_model" not in water
+    assert 'cavity = "none"' in gas

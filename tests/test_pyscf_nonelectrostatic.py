@@ -27,7 +27,7 @@ FORMATE = Geometry(
 @pytest.fixture(scope="module")
 def formate() -> tuple[Any, Solute]:
     """HF/6-31G* formate anion in IEF-PCM water, built as the pipeline builds it."""
-    _mol, mf = _build_mf(FORMATE, -1, "hf", "6-31g*", "IEFPCM", "water")
+    _mol, mf = _build_mf(FORMATE, -1, "hf", "6-31g*", "ISWIG", "water")
     mf.verbose = 0
     mf.kernel()
     return mf, solute_from_mf(mf)
@@ -136,7 +136,7 @@ class TestSoluteFromMf:
 
     def test_refuses_a_mean_field_without_pcm_charges(self) -> None:
         geom = Geometry(symbols=("He",), coords=np.zeros((1, 3)))
-        _mol, mf = _build_mf(geom, 0, "hf", "sto-3g", "IEFPCM", "water")
+        _mol, mf = _build_mf(geom, 0, "hf", "sto-3g", "ISWIG", "water")
         mf.converged = True  # never run: the solvent object holds no charges
         with pytest.raises(ValueError, match="no converged surface charges"):
             solute_from_mf(mf)
@@ -144,28 +144,30 @@ class TestSoluteFromMf:
     def test_cosmo_charges_give_the_same_field_as_ief_pcm(self) -> None:
         """COSMO scales its charges by (eps-1)/(eps+1/2), not (eps-1)/eps; read with the
         wrong factor its charge field comes out short by eps/(eps+1/2), 0.80 in
-        hexadecane.  On a single sphere the two models must agree."""
+        hexadecane.  On a single sphere the two models must agree.  (The runners run
+        IEF-PCM only; a COSMO mean field built some other way still reads right.)"""
         fluoride = Geometry(symbols=("F",), coords=np.zeros((1, 3)))
         mean_field = {}
-        for model in ("IEFPCM", "COSMO"):
-            _mol, mf = _build_mf(fluoride, -1, "hf", "6-31+g*", model, "hexadecane")
+        for model in ("IEF-PCM", "COSMO"):
+            _mol, mf = _build_mf(fluoride, -1, "hf", "6-31+g*", "ISWIG", "hexadecane")
+            mf.with_solvent.method = model
             mf.verbose = 0
             mf.kernel()
             surface = solute_from_mf(mf).surface
             field = nonelectrostatic.charge_field(surface)
             mean_field[model] = surface.areas @ field / surface.areas.sum()
-        assert mean_field["COSMO"] == pytest.approx(mean_field["IEFPCM"], rel=2e-3)
+        assert mean_field["COSMO"] == pytest.approx(mean_field["IEF-PCM"], rel=2e-3)
 
 
 class TestSinglePointWithDescriptors:
     def test_energy_is_that_of_the_plain_single_point(self) -> None:
-        args = (FORMATE, -1, "hf", "6-31g*", "IEFPCM", "water")
+        args = (FORMATE, -1, "hf", "6-31g*", "ISWIG", "water")
         energy, d = single_point_with_descriptors(*args)
         assert energy == pytest.approx(single_point(*args), abs=1e-9)
         assert d.dispersion > 0.0
         assert len(d.areas) == len(d.normal_field) == len(d.element_atoms)
 
-    @pytest.mark.parametrize("model", ["SMD", "ddCOSMO"])
-    def test_refuses_other_solvent_models(self, model: str) -> None:
-        with pytest.raises(ValueError, match="analytical PCM"):
-            single_point_with_descriptors(FORMATE, -1, "hf", "sto-3g", model, "water")
+    @pytest.mark.parametrize("cavity", ["SMD", "IEFPCM"])
+    def test_refuses_what_is_not_a_cavity(self, cavity: str) -> None:
+        with pytest.raises(ValueError, match="no cavity"):
+            single_point_with_descriptors(FORMATE, -1, "hf", "sto-3g", cavity, "water")

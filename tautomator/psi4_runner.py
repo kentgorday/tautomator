@@ -6,11 +6,10 @@ and a (50, 194) NLC grid for VV10-containing functionals, with Psi4's
 recommended ROBUST grid pruning.
 
 Implicit solvent comes from psi4-swig-pcm, installed in Psi4's own environment:
-the same switching/Gaussian PCM as pyscf_runner's, with analytical gradients, so
-Psi4 optimizes in solvent and its frequencies are finite differences of
-analytical PCM gradients.  The same holds on MOIST's DROP cavities (solvent model
-"<model>/<cavity>"), through psi4-swig-pcm's MOIST host; MOIST is installed in Psi4's
-environment too.
+IEF-PCM on the same switching/Gaussian cavity as pyscf_runner's (ISWIG), with
+analytical gradients, so Psi4 optimizes in solvent and its frequencies are finite
+differences of analytical PCM gradients.  The same holds on MOIST's DROP cavities,
+through psi4-swig-pcm's MOIST host; MOIST is installed in Psi4's environment too.
 """
 
 from __future__ import annotations
@@ -27,15 +26,16 @@ from pathlib import Path
 from tautomator.config import (
     AUX_DIFFUSE_S,
     AUXBASIS,
+    CAVITIES,
     DEFAULT_MEMORY_GB,
-    DROP_COMPONENTS,
+    DROP_CAVITIES,
+    DROP_COMPONENT,
     DROP_LSF,
     DROP_NLEB,
     DROP_PRUNE_LEVEL,
-    PCM_METHODS,
+    PCM_METHOD,
     PCM_STORE_FRACTION,
     PCM_SWITCHING,
-    drop_solvent_model,
     solvent_dielectric,
 )
 from tautomator.types import Geometry
@@ -148,7 +148,7 @@ def _df_basis_block(basis: str, geom: Geometry) -> str:
     )
 
 
-# What a job on a DROP solvent model imports, beyond what every PCM job does; check_installed
+# What a job on a DROP cavity imports, beyond what every PCM job does; check_installed
 # launches Psi4 on these lines alone.
 # MOIST, and a psi4-swig-pcm whose MoistSettings builds the cavity on its own radii (the
 # switching/Gaussian cavity's spheres); check_installed runs the same lines
@@ -162,30 +162,31 @@ _MOIST_IMPORTS = (
 
 
 def _solvation(
-    solvent_model: str | None, solvent: str | None, pcm_hydrogen_radius: float, memory_gb: float
+    cavity: str | None, solvent: str | None, pcm_hydrogen_radius: float, memory_gb: float
 ) -> tuple[str, float]:
-    """A job's solvent-model input lines, and the memory (GB) left for Psi4 itself.
+    """A job's implicit-solvent input lines, and the memory (GB) left for Psi4 itself.
 
     A solvated job splits memory_gb as pyscf_runner's PCMs do: the stored surface
     integrals may take PCM_STORE_FRACTION of it (incore_mb), and Psi4 gets the rest
-    (--memory).  Without a solvent model there are no lines and Psi4 gets all of it.
+    (--memory).  Without a cavity there are no lines and Psi4 gets all of it.
     """
-    if solvent_model is None or solvent is None:
+    if cavity is None or solvent is None:
         return "", memory_gb
     store_gb = memory_gb * PCM_STORE_FRACTION
     # Psi4 counts a GB as 1e9 bytes; psi4-swig-pcm's incore_mb is in MiB.
     incore_mb = int(store_gb * 1e9 / 2**20)
-    lines = _pcm_block(solvent_model, solvent, pcm_hydrogen_radius, incore_mb=incore_mb)
+    lines = _pcm_block(cavity, solvent, pcm_hydrogen_radius, incore_mb=incore_mb)
     return lines, memory_gb - store_gb
 
 
 def _pcm_block(
-    solvent_model: str, solvent: str, pcm_hydrogen_radius: float = 1.1, *, incore_mb: int
+    cavity: str, solvent: str, pcm_hydrogen_radius: float = 1.1, *, incore_mb: int
 ) -> str:
-    """Psi4 input lines that put psi4-swig-pcm's PCM into every SCF of the job.
+    """Psi4 input lines that put psi4-swig-pcm's IEF-PCM on the cavity into every SCF of
+    the job.
 
     psi4_swig_pcm.enable() makes Psi4's own energy(), gradient(), optimize() and
-    frequency() include the PCM, with analytical gradients.  The model is
+    frequency() include the PCM, with analytical gradients.  On ISWIG the model is
     pyscf_runner's: switching/Gaussian surface (PCM_SWITCHING) on Lebedev order 29,
     modified-Bondi radii x 1.2 with hydrogen at pcm_hydrogen_radius (Angstrom), and
     the same dielectric constant, so both drivers build the same cavity.  Its warnings go
@@ -193,7 +194,7 @@ def _pcm_block(
     memory) is the most the surface integrals of a cavity may take to be kept between
     SCF iterations; _solvation sizes it.
 
-    A DROP solvent model ("<model>/<cavity>") goes to psi4-swig-pcm's MOIST host instead,
+    A DROP cavity goes to psi4-swig-pcm's MOIST host instead,
     with the cavity, grid and pruning pyscf_runner gives MOIST, on the switching/Gaussian
     cavity's spheres (modified_bondi_radii, pyscf_runner's config.pcm_radii, as
     MoistSettings.radii, which psi4-swig-pcm puts into the cavity) rather than MOIST's own
@@ -207,13 +208,11 @@ def _pcm_block(
         "import psi4_swig_pcm\n"
         'logging.getLogger("psi4_swig_pcm").addHandler(logging.StreamHandler(sys.stderr))\n'
     )
-    drop = drop_solvent_model(solvent_model)
-    if drop is not None:
-        pcm_method, cavity = drop
+    if cavity in DROP_CAVITIES:
         if cavity == "rho-DROP" and pcm_hydrogen_radius != 1.1:
             raise ValueError(
                 f"pcm_hydrogen_radius = {pcm_hydrogen_radius} would change nothing on "
-                f"{solvent_model!r}: the radii only place the isodensity surface's points"
+                f"{cavity!r}: the radii only place the isodensity surface's points"
             )
         moist_settings = (
             "from psi4_swig_pcm.cavity import modified_bondi_radii\n"
@@ -221,20 +220,16 @@ def _pcm_block(
             f"    cavity=moist.DROP(lsf=moist.{DROP_LSF[cavity]}(), "
             f"parameters=moist.DROPParameters(nleb={DROP_NLEB}, "
             f"wleb_prune_level={DROP_PRUNE_LEVEL})),\n"
-            f"    components=(moist.{DROP_COMPONENTS[pcm_method]}({eps!r}),),\n"
+            f"    components=(moist.{DROP_COMPONENT}({eps!r}),),\n"
             f"    incore_mb={incore_mb},\n"
             f"    radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r}),\n"
             "))\n"
         )
         return preamble + _MOIST_IMPORTS + moist_settings
-    key = solvent_model.upper().replace("-", "")
-    if key not in PCM_METHODS:
-        raise ValueError(
-            f"Unknown Psi4 solvent model: {solvent_model!r} "
-            f"(has: {', '.join(sorted(PCM_METHODS))}, or <model>/<SvdW-DROP or rho-DROP>)"
-        )
+    if cavity != "ISWIG":
+        raise ValueError(f"Unknown cavity: {cavity!r} (has: {', '.join(CAVITIES)})")
     settings = (
-        f"method={PCM_METHODS[key]!r}, eps={eps!r}, "
+        f"method={PCM_METHOD!r}, eps={eps!r}, "
         f"switching={PCM_SWITCHING!r}, "
         f"radii=modified_bondi_radii(hydrogen={pcm_hydrogen_radius!r}), "
         f"incore_mb={incore_mb}"
@@ -250,7 +245,7 @@ def single_point(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -274,9 +269,7 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    solvent_lines, psi4_memory_gb = _solvation(
-        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
-    )
+    solvent_lines, psi4_memory_gb = _solvation(cavity, solvent, pcm_hydrogen_radius, memory_gb)
     input_text += solvent_lines
 
     input_text += f"""
@@ -294,7 +287,7 @@ def optimize(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -304,7 +297,7 @@ def optimize(
 
     optking's dynamic_level=1 allows the optimizer to adaptively change
     parameters (coordinate system, trust radius, etc.) when progress stalls.
-    With a solvent model it minimizes in implicit solvent, on analytical PCM
+    With a cavity it minimizes in implicit solvent, on analytical PCM
     gradients.
 
     Returns (optimized_geometry, final_energy_hartree, converged). The
@@ -318,7 +311,7 @@ def optimize(
             charge,
             method,
             basis,
-            solvent_model=solvent_model,
+            cavity=cavity,
             solvent=solvent,
             pcm_hydrogen_radius=pcm_hydrogen_radius,
             threads=threads,
@@ -342,9 +335,7 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    solvent_lines, psi4_memory_gb = _solvation(
-        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
-    )
+    solvent_lines, psi4_memory_gb = _solvation(cavity, solvent, pcm_hydrogen_radius, memory_gb)
     input_text += solvent_lines
 
     # Wrap optimize() so that a non-convergence exception still yields a
@@ -391,7 +382,7 @@ def frequencies(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -421,9 +412,7 @@ set {{
 """
     input_text += _bse_basis_block(basis, geom)
     input_text += _df_basis_block(basis, geom)
-    solvent_lines, psi4_memory_gb = _solvation(
-        solvent_model, solvent, pcm_hydrogen_radius, memory_gb
-    )
+    solvent_lines, psi4_memory_gb = _solvation(cavity, solvent, pcm_hydrogen_radius, memory_gb)
     input_text += solvent_lines
 
     input_text += f"""
@@ -481,7 +470,7 @@ def psi4_executable() -> Path:
 def check_installed(drop: bool = False) -> None:
     """Raise unless there is a Psi4 to launch, and with drop, one that can import MOIST.
 
-    drop: the run has a DROP solvent model.  Its jobs import MOIST in Psi4's own
+    drop: the run is on a DROP cavity.  Its jobs import MOIST in Psi4's own
     interpreter, so the check launches that Psi4 once to import it (about half a
     second).  The psi4 environment has MOIST, but one installed before it did, or a
     psi4 on PATH, may not.  refine() and score() call this when they pick the driver,
@@ -497,7 +486,7 @@ def check_installed(drop: bool = False) -> None:
         except RuntimeError as err:
             errors = re.findall(r"\w+Error: .*", str(err))
             raise ImportError(
-                f"The DROP solvent models need MOIST and a psi4-swig-pcm that builds its "
+                f"The DROP cavities need MOIST and a psi4-swig-pcm that builds its "
                 f"cavity on the PCM's radii, which {psi4} does not have "
                 f"({errors[-1].strip() if errors else 'see the cause above'}). Install or "
                 "update the psi4 environment, which has them: `pixi install -e psi4` (it "

@@ -29,7 +29,6 @@ import moist.pyscf as mp
 from moist import (
     Context,
     IsodensityParameters,
-    ModelComponentCOSMO,
     ModelComponentCPCM,
     ModelComponentIEFPCM,
 )
@@ -459,7 +458,7 @@ class TestECP:
 
 
 # ---------------------------------------------------------------------------
-# The PySCF runner's DROP solvent models ("<PCM model>/<cavity>")
+# The PySCF runner's DROP cavities
 # ---------------------------------------------------------------------------
 WATER = Geometry(
     symbols=("O", "H", "H"),
@@ -469,31 +468,26 @@ WATER = Geometry(
 
 class TestRunner:
     @pytest.mark.parametrize(
-        ("model", "component", "lsf"),
-        [
-            ("IEFPCM/SvdW-DROP", ModelComponentIEFPCM, "SvdW"),
-            ("CPCM/rho-DROP", ModelComponentCPCM, "Isodensity"),
-            ("COSMO/SvdW-DROP", ModelComponentCOSMO, "SvdW"),
-        ],
+        ("cavity", "lsf"), [("SvdW-DROP", "SvdW"), ("rho-DROP", "Isodensity")]
     )
-    def test_build_mf_attaches_moist(self, model: str, component: Any, lsf: str) -> None:
-        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", model, "water")
+    def test_build_mf_attaches_moist(self, cavity: str, lsf: str) -> None:
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", cavity, "water")
         assert type(mf.with_moist) is pyscf_moist._MoistSolvationState
         assert hasattr(mf, "with_df")  # density fitting underneath, as for PySCF's PCM
         (item,) = mf.with_moist.components
-        assert type(item) is component
+        assert type(item) is ModelComponentIEFPCM
         assert type(mf.with_moist.cavity.lsf).__name__ == lsf
         assert mf.with_moist.cavity.parameters.wleb_prune_level == pyscf_moist.PRUNE_LEVEL
 
-    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
-    def test_single_point_with_vdzp(self, model: str) -> None:
+    @pytest.mark.parametrize("cavity", ["SvdW-DROP", "rho-DROP"])
+    def test_single_point_with_vdzp(self, cavity: str) -> None:
         """wB97X-3c/vDZP: an ECP on the oxygen, which MOIST's own host would refuse."""
         gas = pyscf_runner.single_point(WATER, 0, "wB97X-3c", "vDZP")
-        solvated = pyscf_runner.single_point(WATER, 0, "wB97X-3c", "vDZP", model, "water")
+        solvated = pyscf_runner.single_point(WATER, 0, "wB97X-3c", "vDZP", cavity, "water")
         # water's electrostatic solvation energy, in kcal/mol: -6.5 on PySCF's own cavity
         assert -8.0 < (solvated - gas) * 627.5095 < -6.0
 
-    @pytest.mark.parametrize("model", ["IEFPCM/SvdW-DROP", "IEFPCM/rho-DROP"])
+    @pytest.mark.parametrize("model", ["SvdW-DROP", "rho-DROP"])
     def test_optimize(self, model: str) -> None:
         geom, energy, converged = pyscf_runner.optimize(
             WATER, 0, "b3lyp", "def2-svp", model, "water"
@@ -504,9 +498,9 @@ class TestRunner:
         )
 
     def test_unconverged_scf_retries_with_a_level_shift(self) -> None:
-        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "SvdW-DROP", "water")
         reference = pyscf_runner._run_scf_robust(mf)
-        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+        _, mf = pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "SvdW-DROP", "water")
         mf.max_cycle, mf.level_shift = 2, 0.05
         assert pyscf_runner._run_scf_robust(mf) == pytest.approx(reference, abs=1e-7)
         assert mf.converged
@@ -514,14 +508,14 @@ class TestRunner:
 
     def test_no_hessian(self) -> None:
         with pytest.raises(NotImplementedError, match="no Hessian"):
-            pyscf_runner.frequencies(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water")
+            pyscf_runner.frequencies(WATER, 0, "b3lyp", "def2-svp", "SvdW-DROP", "water")
 
     @pytest.mark.parametrize("hydrogen", [1.1, 1.25])
     def test_cavity_is_on_pyscf_cavitys_spheres(self, hydrogen: float) -> None:
         """Never MOIST's own radii: the spheres of PySCF's cavity, whose hydrogen
         pcm_hydrogen_radius sizes, on every element MOIST could be asked for."""
         _, mf = pyscf_runner._build_mf(
-            WATER, 0, "b3lyp", "def2-svp", "IEFPCM/SvdW-DROP", "water", hydrogen
+            WATER, 0, "b3lyp", "def2-svp", "SvdW-DROP", "water", hydrogen
         )
         radii = mf.with_moist.cavity.radii
         assert type(radii) is moist.CustomRadii
@@ -538,4 +532,4 @@ class TestRunner:
     def test_hydrogen_radius_is_refused_on_rho_drop(self) -> None:
         # the isodensity surface does not depend on the radii, which only place its points
         with pytest.raises(ValueError, match="pcm_hydrogen_radius"):
-            pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "IEFPCM/rho-DROP", "water", 1.2)
+            pyscf_runner._build_mf(WATER, 0, "b3lyp", "def2-svp", "rho-DROP", "water", 1.2)

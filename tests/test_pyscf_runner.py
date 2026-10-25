@@ -15,7 +15,7 @@ from pyscf.data.radii import BOHR
 from pyscf.dft import libxc
 from pyscf.solvent import pcm as pyscf_pcm
 
-from tautomator.config import PCM_METHODS, PCM_SWITCHING, solvent_dielectric
+from tautomator.config import PCM_METHOD, PCM_SWITCHING, solvent_dielectric
 from tautomator.pyscf_fast_pcm import FastPCM, unchecked_functions
 
 # Import applies the D4 parameter pin, and the composite registration and PCM
@@ -142,7 +142,7 @@ class TestPCMECPCavity:
             symbols=("O", "H", "H"),
             coords=np.array([[0.0, 0.0, 0.1173], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692]]),
         )
-        _mol, mf = _build_mf(geom, 0, "pbe", basis, "IEFPCM", "water", 1)
+        _mol, mf = _build_mf(geom, 0, "pbe", basis, "ISWIG", "water", 1)
         mf.with_solvent.build()
         return int(mf.with_solvent.surface["grid_coords"].shape[0])
 
@@ -168,27 +168,27 @@ class TestFastPCM:
             coords=np.array([[0.0, 0.0, 0.1173], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692]]),
         )
 
-    @pytest.mark.parametrize("model", list(PCM_METHODS))
-    def test_pcm_models_get_fast_pcm(self, model: str) -> None:
-        _mol, mf = _build_mf(self._geom(), 0, "pbe", "def2-svp", model, "methanol", 1.2)
+    def test_iswig_is_iefpcm_on_fast_pcm(self) -> None:
+        _mol, mf = _build_mf(self._geom(), 0, "pbe", "def2-svp", "ISWIG", "methanol", 1.2)
         ws = mf.with_solvent
         assert (type(ws) is FastPCM) == (not unchecked_functions())
-        assert (ws.method, ws.eps) == (PCM_METHODS[model], solvent_dielectric("methanol"))
+        assert (ws.method, ws.eps) == (PCM_METHOD, solvent_dielectric("methanol"))
         assert ws.radii_table[1] == pytest.approx(ws.vdw_scale * 1.2 / BOHR + ws.r_probe / BOHR)
         assert ws.surface_discretization_method == PCM_SWITCHING
         ws.build()
         assert "R_J" in ws.surface  # what PySCF keeps for ISWIG (SWIG keeps R_in_J, R_sw_J)
 
-    def test_smd_keeps_pyscfs_class(self) -> None:
-        _mol, mf = _build_mf(self._geom(), 0, "pbe", "def2-svp", "SMD", "water")
-        assert not isinstance(mf.with_solvent, FastPCM)
+    @pytest.mark.parametrize("cavity", ["SMD", "IEFPCM", "ddCOSMO", "iswig"])
+    def test_only_the_cavities(self, cavity: str) -> None:
+        with pytest.raises(ValueError, match="Unknown cavity"):
+            _build_mf(self._geom(), 0, "pbe", "def2-svp", cavity, "water")
 
     def test_matches_pyscfs_own_pcm_with_an_ecp_basis(self) -> None:
         """vDZP puts an ECP on oxygen.  Both runs build the same cavity, so its ECP radii
         are TestPCMECPCavity's to check, not this test's."""
         runs = []
         for fast in (True, False):
-            _mol, mf = _build_mf(self._geom(), 0, "pbe", "vDZP", "IEFPCM", "water")
+            _mol, mf = _build_mf(self._geom(), 0, "pbe", "vDZP", "ISWIG", "water")
             if not fast:
                 mf.with_solvent.__class__ = pyscf_pcm.PCM
                 mf.with_solvent.reset()
@@ -358,7 +358,7 @@ class TestD4ParametersMatchDftd4:
         # dispersion settings over (mf.disp and mf.nlc on the newer route).
         mol = gto.M(atom=_WATER, verbose=0)
         geom = Geometry(symbols=tuple(mol.elements), coords=mol.atom_coords(unit="Angstrom"))
-        _mol, mf = _build_mf(geom, 0, method, "def2-svp", "IEFPCM", "water")
+        _mol, mf = _build_mf(geom, 0, method, "def2-svp", "ISWIG", "water")
         ref = d4_reference[_D4_COMPOSITES[method][1]]
         assert not mf.do_nlc()
         assert float(mf.get_dispersion()) == pytest.approx(float(ref["energy"]), rel=1e-10)
@@ -572,7 +572,7 @@ class TestDensityFittingIsOn:
             coords=np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]]),
         )
         _mol, mf = _build_mf(
-            geom, 0, "PBE0", "def2-SVP", "IEFPCM", "water", threads=1, memory_gb=1.0
+            geom, 0, "PBE0", "def2-SVP", "ISWIG", "water", threads=1, memory_gb=1.0
         )
         assert hasattr(mf, "with_solvent"), "solvent wrapper missing"
         assert getattr(mf, "with_df", None) is not None, "density fitting not attached"

@@ -24,11 +24,12 @@ import numpy as np
 from tautomator.config import (
     AUX_DIFFUSE_S,
     AUXBASIS,
+    CAVITIES,
     DEFAULT_MEMORY_GB,
-    DROP_COMPONENTS,
-    PCM_METHODS,
+    DROP_CAVITIES,
+    DROP_COMPONENT,
+    PCM_METHOD,
     PCM_SWITCHING,
-    drop_solvent_model,
     pcm_radii,
     solvent_dielectric,
 )
@@ -280,8 +281,8 @@ def _patch_pcm_ecp_cavity() -> None:
     cavity of every heavy atom in every PySCF implicit-solvent calculation
     (shifting solvation energies by ~0.26 kcal/mol on water).  We wrap
     ``gen_surface`` to expose true nuclear charges for the duration of the call.
-    Every caller (PCM and SMD) reaches the function via ``pcm.gen_surface``, so a
-    single reassignment covers them all.  gpu4pyscf has its own, already-correct
+    Every caller reaches the function via ``pcm.gen_surface``, so a single
+    reassignment covers them all.  gpu4pyscf has its own, already-correct
     ``gen_surface`` and is untouched.
 
     PySCF fixed this upstream in 2.13.0 (radii now come from ``mol.elements``),
@@ -437,7 +438,7 @@ def _build_mf(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -445,7 +446,8 @@ def _build_mf(
 ) -> tuple[Any, Any]:
     """Build a PySCF Mole and mean-field object with the requested settings.
 
-    Returns (mol, mf) where mf is ready for .kernel().
+    Returns (mol, mf) where mf is ready for .kernel().  With a cavity (config.CAVITIES)
+    and a solvent, mf is in IEF-PCM on that cavity; otherwise in the gas phase.
 
     memory_gb sets Mole.max_memory (PySCF's own units are MB).  Unlike Psi4's
     --memory this is a budget PySCF acts on -- it picks incore vs outcore
@@ -512,28 +514,22 @@ def _build_mf(
         mf.nlcgrids.atom_grid = (50, 194)
         mf.nlcgrids.prune = dft.gen_grid.nwchem_prune
 
-    # Implicit solvent.  Prefer the analytical PCM (with proper gradients)
-    # over the experimental ddPCM/ddCOSMO domain-decomposed variants.
-    if solvent_model is not None and solvent is not None:
+    # Implicit solvent: IEF-PCM on the cavity.
+    if cavity is not None and solvent is not None:
         from pyscf import solvent as pyscf_solvent
 
-        solvent_model_upper = solvent_model.upper().replace("-", "")
-        drop = drop_solvent_model(solvent_model)
-        if drop is not None:
-            if drop[1] == "rho-DROP" and pcm_hydrogen_radius != 1.1:
+        if cavity in DROP_CAVITIES:
+            if cavity == "rho-DROP" and pcm_hydrogen_radius != 1.1:
                 raise ValueError(
                     f"pcm_hydrogen_radius = {pcm_hydrogen_radius} would change nothing on "
-                    f"{solvent_model!r}: the radii only place the isodensity surface's points"
+                    f"{cavity!r}: the radii only place the isodensity surface's points"
                 )
             mf = _attach_drop(
-                mf, drop[0], drop[1], solvent_dielectric(solvent), threads, pcm_hydrogen_radius
+                mf, cavity, solvent_dielectric(solvent), threads, pcm_hydrogen_radius
             )
-        elif solvent_model_upper == "SMD":
-            mf = pyscf_solvent.SMD(mf)
-            mf.with_solvent.solvent = solvent
-        elif solvent_model_upper in PCM_METHODS:
+        elif cavity == "ISWIG":
             mf = pyscf_solvent.PCM(mf)
-            mf.with_solvent.method = PCM_METHODS[solvent_model_upper]
+            mf.with_solvent.method = PCM_METHOD
             mf.with_solvent.eps = solvent_dielectric(solvent)
             # Cavity radii: the final sphere radii, the same table the DROP cavities
             # take (config.pcm_radii); with pcm_hydrogen_radius=1.10 it is PySCF's
@@ -554,14 +550,8 @@ def _build_mf(
             from tautomator.pyscf_fast_pcm import use_fast_pcm
 
             use_fast_pcm(mf)
-        elif solvent_model_upper == "DDPCM":
-            mf = pyscf_solvent.ddPCM(mf)
-            mf.with_solvent.eps = solvent_dielectric(solvent)
-        elif solvent_model_upper == "DDCOSMO":
-            mf = pyscf_solvent.ddCOSMO(mf)
-            mf.with_solvent.eps = solvent_dielectric(solvent)
         else:
-            raise ValueError(f"Unknown PySCF solvent model: {solvent_model!r}")
+            raise ValueError(f"Unknown cavity: {cavity!r} (has: {', '.join(CAVITIES)})")
 
     # SCF robustness: allow more iterations for difficult cases (especially
     # in implicit solvent).  Default is 50; bump to 100.
@@ -570,11 +560,9 @@ def _build_mf(
     return mol, mf
 
 
-def _attach_drop(
-    mf: Any, pcm_method: str, cavity: str, eps: float, threads: int, hydrogen_radius: float
-) -> Any:
-    """``mf`` in a PCM model on one of MOIST's DROP cavities (tautomator.pyscf_moist), on
-    the spheres of PySCF's cavity (config.pcm_radii, hydrogen at hydrogen_radius).
+def _attach_drop(mf: Any, cavity: str, eps: float, threads: int, hydrogen_radius: float) -> Any:
+    """``mf`` in IEF-PCM on one of MOIST's DROP cavities (tautomator.pyscf_moist), on the
+    spheres of PySCF's cavity (config.pcm_radii, hydrogen at hydrogen_radius).
 
     After density fitting, like PySCF's own solvent wrappers: MOIST's wrapper rebuilds a
     density-fitted mean field without MoistHost.
@@ -588,7 +576,7 @@ def _attach_drop(
             f"the {cavity} cavity needs MOIST, which the default pixi environment has "
             "(pixi install; the first install compiles it)"
         ) from err
-    component = getattr(moist, DROP_COMPONENTS[pcm_method])(eps)
+    component = getattr(moist, DROP_COMPONENT)(eps)
     context = moist.Context(nthreads=threads, verbosity=0)
     return attach(
         mf,
@@ -601,7 +589,7 @@ def _attach_drop(
 def _run_scf_robust(mf: Any) -> float:
     """Run SCF; on non-convergence, retry with second-order SCF (.newton()).
 
-    MOIST's PCM (a DROP solvent model) has no second-order SCF: there the retry is a
+    MOIST's PCM (a DROP cavity) has no second-order SCF: there the retry is a
     level-shifted SCF from the last density instead.  The shift changes only the path, not
     the answer: it raises the virtual orbitals' energies, which leaves the occupied-virtual
     block (the orbital gradient) alone, and PySCF tests convergence on the unshifted Fock
@@ -653,7 +641,7 @@ def single_point(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -668,7 +656,7 @@ def single_point(
         charge,
         method,
         basis,
-        solvent_model,
+        cavity,
         solvent,
         pcm_hydrogen_radius,
         threads,
@@ -682,7 +670,7 @@ def optimize(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -706,7 +694,7 @@ def optimize(
             charge,
             method,
             basis,
-            solvent_model=solvent_model,
+            cavity=cavity,
             solvent=solvent,
             pcm_hydrogen_radius=pcm_hydrogen_radius,
             threads=threads,
@@ -722,7 +710,7 @@ def optimize(
             charge,
             method,
             basis,
-            solvent_model,
+            cavity,
             solvent,
             pcm_hydrogen_radius,
             threads,
@@ -774,7 +762,7 @@ def frequencies(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -792,10 +780,8 @@ def frequencies(
     """
     if geom.n_atoms == 1:
         return []
-    if drop_solvent_model(solvent_model) is not None:
-        raise NotImplementedError(
-            f"no Hessian in solvent_model = {solvent_model!r}: MOIST's PCM has none"
-        )
+    if cavity in DROP_CAVITIES:
+        raise NotImplementedError(f"no Hessian on the {cavity} cavity: MOIST's PCM has none")
     method_lower = method.lower().replace("_", "-")
     hess_method = _HESSIAN_FALLBACK.get(method_lower, method)
     if hess_method != method:
@@ -808,7 +794,7 @@ def frequencies(
         charge,
         hess_method,
         basis,
-        solvent_model,
+        cavity,
         solvent,
         pcm_hydrogen_radius,
         threads,

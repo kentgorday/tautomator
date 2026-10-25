@@ -189,11 +189,11 @@ def _energy_gradient(
     return energy_ev / HARTREE_TO_EV, gradient
 
 
-def _refuse_solvent(solvent_model: str | None) -> None:
-    if solvent_model is not None:
+def _refuse_solvent(cavity: str | None) -> None:
+    if cavity is not None:
         raise ValueError(
             "OrbMol-v2 is a gas-phase potential with no implicit solvent; "
-            f"solvent_model={solvent_model!r} cannot be honoured."
+            f"cavity={cavity!r} cannot be honoured."
         )
 
 
@@ -202,14 +202,14 @@ def single_point(
     charge: int,
     method: str,
     basis: str = "",
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
     memory_gb: float = DEFAULT_MEMORY_GB,
 ) -> float:
     """Gas-phase energy in Hartree."""
-    _refuse_solvent(solvent_model)
+    _refuse_solvent(cavity)
     return _energy_gradient(geom, charge, method, threads=threads)[0]
 
 
@@ -218,7 +218,7 @@ def optimize(
     charge: int,
     method: str,
     basis: str = "",
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -232,7 +232,7 @@ def optimize(
     converged); the geometry and energy are the last step's whether or not it
     converged.
     """
-    _refuse_solvent(solvent_model)
+    _refuse_solvent(cavity)
     if geom.n_atoms == 1:
         # An atom has no internal coordinates: its minimum is itself.
         energy = single_point(geom, charge, method, basis, threads=threads, memory_gb=memory_gb)
@@ -293,7 +293,7 @@ def frequencies(
     charge: int,
     method: str,
     basis: str = "",
-    solvent_model: str | None = None,
+    cavity: str | None = None,
     solvent: str | None = None,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
@@ -307,7 +307,7 @@ def frequencies(
     driver uses -- so masses and projection match that driver exactly.  An empty
     list for an atom.
     """
-    _refuse_solvent(solvent_model)
+    _refuse_solvent(cavity)
     if geom.n_atoms == 1:
         return []
     from pyscf import gto

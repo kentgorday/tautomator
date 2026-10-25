@@ -19,7 +19,7 @@ SETTINGS = Settings(PARAMS, solvent_electron_density("water"))
 def _scf(
     geom: Geometry, self_consistent: bool = True, method: str = "hf", basis: str = "6-31g*"
 ) -> tuple[Any, Any]:
-    mol, mf = _build_mf(geom, -1, method, basis, "IEFPCM", "water")
+    mol, mf = _build_mf(geom, -1, method, basis, "ISWIG", "water")
     mf.verbose = 0
     mf.conv_tol = 1e-13
     mf.conv_tol_grad = 1e-9

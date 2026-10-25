@@ -44,14 +44,12 @@ class TestWithoutModel:
 
     @pytest.mark.parametrize("fn", ["single_point", "optimize", "frequencies"])
     @pytest.mark.parametrize("geom", [WATER, CHLORIDE], ids=["water", "atom"])
-    def test_solvent_model_refused(self, fn: str, geom: Geometry) -> None:
+    def test_cavity_refused(self, fn: str, geom: Geometry) -> None:
         # An atom too: optimize and frequencies return early for one, and must not
         # hand back a gas-phase answer to a solvated request.
         charge = -1 if geom is CHLORIDE else 0
         with pytest.raises(ValueError, match="gas-phase potential"):
-            getattr(orbmol_runner, fn)(
-                geom, charge, METHOD, solvent_model="IEFPCM", solvent="water"
-            )
+            getattr(orbmol_runner, fn)(geom, charge, METHOD, cavity="ISWIG", solvent="water")
 
     def test_checksum_mismatch_raises(self, tmp_path: Path) -> None:
         bogus = tmp_path / "weights.ckpt"

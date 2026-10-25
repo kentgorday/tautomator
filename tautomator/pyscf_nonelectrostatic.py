@@ -47,9 +47,9 @@ from tautomator.cavity_quadrature import (
     partition_gradient,
 )
 from tautomator.config import (
+    CAVITIES,
     DEFAULT_MEMORY_GB,
-    PCM_METHODS,
-    drop_solvent_model,
+    DROP_CAVITIES,
     solvent_electron_density,
 )
 from tautomator.dispersion_kernel import kernel_derivatives, kernel_integral
@@ -202,39 +202,35 @@ def single_point_with_descriptors(
     charge: int,
     method: str,
     basis: str,
-    solvent_model: str,
+    cavity: str,
     solvent: str,
     pcm_hydrogen_radius: float = 1.1,
     threads: int = 1,
     memory_gb: float = DEFAULT_MEMORY_GB,
 ) -> tuple[float, Descriptors]:
-    """A PCM single point, as `pyscf_runner.single_point` runs it, and its descriptors.
+    """An IEF-PCM single point on the cavity, as `pyscf_runner.single_point` runs it, and
+    its descriptors.
 
     Returns (total energy in hartree, descriptors at the default cavity
     quadrature, with the solvent's electron density in the dispersion term).  On one of
-    MOIST's DROP cavities ("<model>/<cavity>") the descriptors are those of
+    MOIST's DROP cavities the descriptors are those of
     `pyscf_nonelectrostatic_drop.drop_descriptors`, on MOIST's surface.
     """
-    drop = drop_solvent_model(solvent_model)
-    if drop is None and solvent_model.upper().replace("-", "") not in PCM_METHODS:
-        raise ValueError(
-            f"The nonelectrostatic descriptors need an analytical PCM model "
-            f"({', '.join(sorted(set(PCM_METHODS.values())))}), on PySCF's cavity or "
-            f"a DROP cavity, not {solvent_model!r}"
-        )
+    if cavity not in CAVITIES:
+        raise ValueError(f"no cavity {cavity!r} (has: {', '.join(CAVITIES)})")
     _mol, mf = pyscf_runner._build_mf(
         geom,
         charge,
         method,
         basis,
-        solvent_model,
+        cavity,
         solvent,
         pcm_hydrogen_radius,
         threads,
         memory_gb,
     )
     energy = pyscf_runner._run_scf_robust(mf)
-    if drop is not None:
+    if cavity in DROP_CAVITIES:
         from tautomator.pyscf_nonelectrostatic_drop import drop_descriptors
 
         return energy, drop_descriptors(mf, solvent_electron_density(solvent))

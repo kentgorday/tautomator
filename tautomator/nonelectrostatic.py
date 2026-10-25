@@ -406,21 +406,19 @@ def descriptors(
 # ---------------------------------------------------------------------------
 
 # What scoring writes into a run's output directory when run_pipeline is asked for
-# descriptors: this for the run's own solvent model, and `descriptor_file(model)` for
-# each further model.
+# descriptors: this for the run's own cavity, and `descriptor_file(cavity)` for each
+# further cavity.
 DESCRIPTOR_FILE = "nonelectrostatic.npz"
 _FILE_VERSION = 1
 
 
-def descriptor_file(solvent_model: str | None = None) -> str:
-    """The file scoring saves a solvent model's descriptors to: DESCRIPTOR_FILE for the
-    run's own model (None), nonelectrostatic_<model>.npz for a further one, the name
-    normalized (upper case, no hyphens, then lower case): "IEFPCM/rho-DROP" ->
-    nonelectrostatic_iefpcm_rhodrop.npz."""
-    if solvent_model is None:
+def descriptor_file(cavity: str | None = None) -> str:
+    """The file scoring saves a cavity's descriptors to: DESCRIPTOR_FILE for the run's own
+    cavity (None), nonelectrostatic_<cavity>.npz for a further one, the name lower case
+    without hyphens: "rho-DROP" -> nonelectrostatic_rhodrop.npz."""
+    if cavity is None:
         return DESCRIPTOR_FILE
-    slug = solvent_model.upper().replace("-", "").replace("/", "_").lower()
-    return f"nonelectrostatic_{slug}.npz"
+    return f"nonelectrostatic_{cavity.replace('-', '').lower()}.npz"
 
 
 @dataclass(frozen=True)

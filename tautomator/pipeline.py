@@ -16,7 +16,7 @@ from tautomator.ensemble import (
 )
 from tautomator.refinement import refine
 from tautomator.sampling import run_approach1, run_approach2
-from tautomator.scoring import check_descriptor_models, score
+from tautomator.scoring import check_descriptor_cavities, score
 from tautomator.types import Ensemble
 
 log = logging.getLogger(__name__)
@@ -87,9 +87,9 @@ def run_pipeline(
 
     descriptors (not part of the config: for fitting the nonelectrostatic
     correction, scripts/run_mnsol_set.py): save every scored conformer's
-    nonelectrostatic descriptors with its energies, on the run's own solvent model
-    and on each further model listed (one more solvated single point per conformer
-    and model); `scoring.score` says where.  None saves none.
+    nonelectrostatic descriptors with its energies, on the run's own cavity and on
+    each further cavity listed (one more solvated single point per conformer and
+    cavity); `scoring.score` says where.  None saves none.
 
     Returns Ensemble with Boltzmann weights assigned.
     """
@@ -98,16 +98,16 @@ def run_pipeline(
         # before any stage runs, not after days of sampling and refinement
         if config.compute.driver != "pyscf":
             raise ValueError("The nonelectrostatic descriptors need [compute] driver = 'pyscf'")
-        check_descriptor_models(config.scoring.solvent_model, descriptors)
+        check_descriptor_cavities(config.scoring.cavity, descriptors)
 
     # One solvent for the whole run: xTB's ALPB during sampling and xtb-level
-    # RRHO, and the implicit-solvent model at refinement and scoring.  A run
+    # RRHO, and the implicit solvent (IEF-PCM) at refinement and scoring.  A run
     # that mixed them would filter on one solvent and score in another.  A run
     # scored in the gas phase uses none: it samples in the gas phase too (and
     # refine() computes its RRHO there), so its free energy is a gas-phase one
     # throughout, as the reference state of a solvation free energy must be.
     solvent = config.molecule.solvent
-    sampling_solvent = solvent if config.scoring.solvent_model is not None else None
+    sampling_solvent = solvent if config.scoring.cavity is not None else None
     provenance = config.provenance()
 
     resumed_from: str | None = None
@@ -168,7 +168,7 @@ def run_pipeline(
             config.refinement,
             driver=config.compute.driver,
             solvent=solvent,
-            solvent_model=config.scoring.solvent_model,
+            cavity=config.scoring.cavity,
             threads=threads,
             memory_gb=memory_gb,
         )
@@ -187,14 +187,14 @@ def run_pipeline(
         driver_name=config.compute.driver,
         method=sc.method,
         basis=sc.basis,
-        solvent_model=sc.solvent_model,
+        cavity=sc.cavity,
         solvent=solvent,
         ewin=sc.ewin,
         pcm_hydrogen_radius=sc.pcm_hydrogen_radius,
         threads=threads,
         memory_gb=memory_gb,
         descriptors_dir=output_dir if descriptors is not None else None,
-        descriptor_models=tuple(descriptors or ()),
+        descriptor_cavities=tuple(descriptors or ()),
     )
     ensemble.settings["scoring"] = provenance["scoring"]
 

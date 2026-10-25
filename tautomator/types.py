@@ -60,7 +60,7 @@ class Conformer:
         Set at sampling (xTB) and replaced at refinement/scoring (DFT).
       - solvation_energy: solvation free energy contribution (Hartree).
         At sampling, computed as (CREST ALPB total) - (gas-phase xTB SP).
-        At refinement/scoring, from implicit solvent model (SMD/PCM).
+        At refinement/scoring, from implicit solvent (IEF-PCM on the run's cavity).
       - rrho_correction: quasi-RRHO vibrational free energy (Hartree).
         Set at sampling (xTB --hess on the xTB geometry) and recomputed at
         refinement on the DFT geometry per the configured rrho_method.

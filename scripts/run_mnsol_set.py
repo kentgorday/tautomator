@@ -18,12 +18,11 @@ The logP-only solutes need no gas run: logP is G(woctanol) - G(water).
 
 Output goes to <output-root>/<medium>/<solute>/, each a normal pipeline output
 directory (sampling/, refinement/, ensemble.json, config.toml).  A solvent run
-minimizes and scores in IEF-PCM on MOIST's SvdW-DROP cavity (--solvent-model),
-and saves every conformer it scored, with its energies and nonelectrostatic
-descriptors, to nonelectrostatic.npz; and the same at the same geometries in
-IEF-PCM on PySCF's switching/Gaussian cavity and on rho-DROP
-(--descriptor-models), to nonelectrostatic_iefpcm.npz and
-nonelectrostatic_iefpcm_rhodrop.npz (read any with
+minimizes and scores in IEF-PCM on MOIST's SvdW-DROP cavity (--cavity), and saves
+every conformer it scored, with its energies and nonelectrostatic descriptors, to
+nonelectrostatic.npz; and the same at the same geometries on PySCF's
+switching/Gaussian cavity (ISWIG) and on rho-DROP (--descriptor-cavities), to
+nonelectrostatic_iswig.npz and nonelectrostatic_rhodrop.npz (read any with
 nonelectrostatic.load_descriptors).  The fit reweights the conformers from
 there without any quantum chemistry, on whichever cavity it chooses.  The
 descriptors are not a config setting: main() asks run_pipeline for them.  Each
@@ -70,22 +69,19 @@ import traceback
 from pathlib import Path
 
 from tautomator.batch import compound_dir_name
-from tautomator.config import DEFAULT_MEMORY_GB, PROTOCOLS, load_config
+from tautomator.config import CAVITIES, DEFAULT_CAVITY, DEFAULT_MEMORY_GB, PROTOCOLS, load_config
 from tautomator.nonelectrostatic import descriptor_file
 from tautomator.pipeline import run_pipeline
-from tautomator.scoring import check_descriptor_models
+from tautomator.scoring import check_descriptor_cavities
 
-# The three cavities a fit can choose between, in IEF-PCM.  Solvent runs minimize and score
-# in SOLVENT_MODEL (--solvent-model) and by default save descriptors on the other two at
-# the same geometries.
-CAVITY_MODELS = ("IEFPCM/SvdW-DROP", "IEFPCM", "IEFPCM/rho-DROP")
-SOLVENT_MODEL = CAVITY_MODELS[0]
+# The cavities a fit can choose between (config.CAVITIES): solvent runs minimize and score
+# on one (--cavity, the default cavity unless given) and by default save descriptors on the
+# others at the same geometries.
 
 
-def default_descriptor_models(solvent_model: str) -> list[str]:
-    """CAVITY_MODELS less the run's own model, whose descriptors scoring saves anyway."""
-    own = solvent_model.upper().replace("-", "")
-    return [m for m in CAVITY_MODELS if m.upper().replace("-", "") != own]
+def default_descriptor_cavities(cavity: str) -> list[str]:
+    """CAVITIES less the run's own cavity, whose descriptors scoring saves anyway."""
+    return [c for c in CAVITIES if c != cavity]
 
 
 # Medium -> the reference columns that need a run in it.
@@ -111,12 +107,12 @@ def make_toml(
     threads: int,
     memory_gb: float,
     protocol: str,
-    solvent_model: str,
+    cavity: str,
 ) -> str:
     """The config for one solute in one medium.
 
     The protocol sets every level of theory and window; a solvent run minimizes and
-    scores in ``solvent_model``, and a gas-phase run only switches scoring to the gas
+    scores in IEF-PCM on ``cavity``, and a gas-phase run only switches scoring to the gas
     phase, which takes refinement, sampling and the RRHO there with it.  Its
     [molecule] solvent is unused, and it has no descriptors: there is no cavity in
     the gas phase.  The descriptors are not in the config: main() asks run_pipeline
@@ -124,8 +120,7 @@ def make_toml(
     """
     safe_smiles = smiles.replace('"', '\\"')
     gas = medium == "gas"
-    model = "none" if gas else solvent_model
-    scoring = f'[scoring]\nsolvent_model = "{model}"\n\n'
+    scoring = f'[scoring]\ncavity = "{"none" if gas else cavity}"\n\n'
     return f'''\
 protocol = "{protocol}"
 
@@ -171,20 +166,21 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--solvent-model",
-        default=SOLVENT_MODEL,
-        help=f"the model solvent runs minimize and score in (default: {SOLVENT_MODEL})",
+        "--cavity",
+        default=DEFAULT_CAVITY,
+        choices=CAVITIES,
+        help=f"the cavity solvent runs minimize and score on (default: {DEFAULT_CAVITY})",
     )
     parser.add_argument(
-        "--descriptor-models",
+        "--descriptor-cavities",
         nargs="*",
         default=None,
-        metavar="MODEL",
+        choices=CAVITIES,
+        metavar="CAVITY",
         help=(
-            "further solvent models to save descriptors on, at the same geometries, one "
-            "more solvated single point per conformer each (default: those of "
-            f"{' '.join(CAVITY_MODELS)} other than --solvent-model; none: pass the flag "
-            "alone)"
+            "further cavities to save descriptors on, at the same geometries, one more "
+            "solvated single point per conformer each (default: those of "
+            f"{' '.join(CAVITIES)} other than --cavity; none: pass the flag alone)"
         ),
     )
     parser.add_argument(
@@ -218,12 +214,12 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    if args.descriptor_models is None:
-        args.descriptor_models = default_descriptor_models(args.solvent_model)
+    if args.descriptor_cavities is None:
+        args.descriptor_cavities = default_descriptor_cavities(args.cavity)
     if args.descriptors:
         # here rather than in every run, which would each record the same error
         try:
-            check_descriptor_models(args.solvent_model, args.descriptor_models)
+            check_descriptor_cavities(args.cavity, args.descriptor_cavities)
         except ValueError as err:
             print(f"Error: {err}", file=sys.stderr)
             sys.exit(1)
@@ -260,7 +256,7 @@ def main() -> None:
         run_dir = args.output_root / medium / compound_dir_name(uid)
         label = f"[{i}/{len(runs)}] {uid} ({smiles}) in {medium}"
         descriptors = args.descriptors and medium != "gas"
-        files = [descriptor_file(m) for m in (None, *args.descriptor_models)]
+        files = [descriptor_file(c) for c in (None, *args.descriptor_cavities)]
         finished = (run_dir / "ensemble.json").exists() and (
             not descriptors or all((run_dir / f).exists() for f in files)
         )
@@ -282,13 +278,13 @@ def main() -> None:
                 args.threads,
                 args.memory,
                 args.protocol,
-                args.solvent_model,
+                args.cavity,
             )
             (run_dir / "config.toml").write_text(toml)
             run_pipeline(
                 load_config(run_dir / "config.toml"),
                 resume=args.resume,
-                descriptors=args.descriptor_models if descriptors else None,
+                descriptors=args.descriptor_cavities if descriptors else None,
             )
             n_ok += 1
             log.info(f"{label}: done")
