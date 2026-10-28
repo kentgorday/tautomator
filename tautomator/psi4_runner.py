@@ -443,25 +443,39 @@ psi4.print_out(f'\\n=== FINAL ENERGY: {{E:.12f}} ===\\n')
 # ---------------------------------------------------------------------------
 
 
+# The Psi4 environment (pixi.toml) of each environment tautomator runs in that does not
+# take the psi4 one: the accelerate environment's Psi4 is on Accelerate too.
+_PSI4_ENVIRONMENTS = {"accelerate": "psi4-accelerate"}
+
+
+def psi4_environment() -> str:
+    """The pixi environment whose Psi4 this interpreter launches."""
+    return _PSI4_ENVIRONMENTS.get(Path(sys.prefix).name, "psi4")
+
+
 def psi4_executable() -> Path:
-    """The psi4 to launch: this project's psi4 environment, else one on PATH.
+    """The psi4 to launch: this project's Psi4 environment, else one on PATH.
 
     Psi4 is a separate program with a pixi environment of its own, installed
-    beside the one this interpreter runs in (.pixi/envs/psi4 next to
-    .pixi/envs/default).  That one comes first because it is the locked one; a
+    beside the one this interpreter runs in: .pixi/envs/psi4 next to
+    .pixi/envs/default, .pixi/envs/psi4-accelerate next to .pixi/envs/accelerate
+    (psi4_environment).  That one comes first because it is the locked one; a
     psi4 on PATH is the fallback for installs that provide it some other way.
+    The accelerate environment does not fall back to the psi4 one, whose Psi4 is
+    on another BLAS.
 
     Raises if there is neither.  refine() and score() call this (through
     check_installed) when they pick the driver, so a missing Psi4 stops the run
     there instead of being recorded as every conformer's own failure.
     """
-    sibling = Path(sys.prefix).parent / "psi4" / "bin" / "psi4"
+    env = psi4_environment()
+    sibling = Path(sys.prefix).parent / env / "bin" / "psi4"
     if sibling.is_file():
         return sibling
     on_path = shutil.which("psi4")
     if on_path is None:
         raise FileNotFoundError(
-            "No psi4 executable: install its environment with `pixi install -e psi4`, "
+            f"No psi4 executable: install its environment with `pixi install -e {env}`, "
             "or put psi4 on PATH."
         )
     return Path(on_path)
@@ -472,8 +486,8 @@ def check_installed(drop: bool = False) -> None:
 
     drop: the run is on a DROP cavity.  Its jobs import MOIST in Psi4's own
     interpreter, so the check launches that Psi4 once to import it (about half a
-    second).  The psi4 environment has MOIST, but one installed before it did, or a
-    psi4 on PATH, may not.  refine() and score() call this when they pick the driver,
+    second).  The Psi4 environments have MOIST, but one installed before they did, or
+    a psi4 on PATH, may not.  refine() and score() call this when they pick the driver,
     so a missing Psi4 or MOIST stops the run there instead of being recorded as every
     conformer's own failure.
     """
@@ -489,8 +503,8 @@ def check_installed(drop: bool = False) -> None:
                 f"The DROP cavities need MOIST and a psi4-swig-pcm that builds its "
                 f"cavity on the PCM's radii, which {psi4} does not have "
                 f"({errors[-1].strip() if errors else 'see the cause above'}). Install or "
-                "update the psi4 environment, which has them: `pixi install -e psi4` (it "
-                "compiles MOIST)."
+                f"update the {psi4_environment()} environment, which has them: "
+                f"`pixi install -e {psi4_environment()}` (it compiles MOIST)."
             ) from err
 
 

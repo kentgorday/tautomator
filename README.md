@@ -405,6 +405,15 @@ pixi install -e psi4    # only for compute.driver = "psi4" (it has MOIST too)
 pixi run python scripts/run_pipeline.py examples/glycine_pyscf.toml
 ```
 
+On osx-arm64 with macOS 27.2 or later, `accelerate` and `psi4-accelerate` are
+the same two environments on Apple's Accelerate instead of OpenBLAS (see
+"Non-obvious design decisions"). A run in `accelerate` launches
+`psi4-accelerate`'s Psi4.
+
+```bash
+pixi install -e accelerate -e psi4-accelerate
+```
+
 Outputs land in `compute.output_dir`:
 
 ```
@@ -494,7 +503,8 @@ The set of things that look weird and aren't. Read before "fixing":
   could not move: Psi4 after 1.10.0 is built against pybind11-abi 11 and
   PySCF's xcfun against abi 4, which held Psi4 at 1.10.0 and libxc at 7.0.
   `psi4_runner.psi4_executable` takes the `psi4` in the environment next to
-  the running interpreter's (`.pixi/envs/psi4`) before any on `PATH`, so the
+  the running interpreter's (`.pixi/envs/psi4`, or `.pixi/envs/psi4-accelerate`
+  next to `accelerate`: `psi4_environment`) before any on `PATH`, so the
   locked one is not shadowed, and launches it with its own `bin` first on
   `PATH`: Psi4 finds `mctc-gcp` there, and r2SCAN-3c fails without it.
   `refine()` and `score()` look the executable up when they pick the driver,
@@ -584,19 +594,25 @@ The set of things that look weird and aren't. Read before "fixing":
 - **orb-models' dependencies are bent in `pixi.toml`.** It pins
   `dm-tree==0.1.8`, which has no py3.13 wheel and whose conda-forge builds
   conflict with current pytorch, so the pin is overridden (orb-models only uses
-  `tree.map_structure`/`flatten`). torch comes from conda-forge and is held at
-  2.8/2.9 because newer builds need pybind11-abi 11 while PySCF's xcfun needs
-  abi 4; on linux-64 it is the MKL build, which moves libblas to MKL.
-- **BLAS/LAPACK is conda-forge's default, not Apple's Accelerate.** On
-  osx-arm64 that is OpenBLAS (its OpenMP build, the one pytorch accepts); on
-  linux-64 the pytorch build moves it to MKL. numpy, scipy, PySCF, Psi4, xtb,
-  torch and MOIST all link the generic `libblas`/`liblapack`, so `pixi.toml`
-  names no variant. Accelerate (`libblas = { build = "*_newaccelerate" }` or
-  `"*_accelerate"`) was faster — OrbMol-v2 gradients 3.7x, a PySCF
-  wB97M-V/def2-TZVPPD Fock build 1.4x, a Psi4 wB97X-3c gradient job 1.1-1.5x,
-  PySCF at def2-QZVPPD 1.05x (M4 Pro, 4 threads, a 20-atom molecule) — but its
-  Cholesky factorization of the upper triangle (`dpotrf` with `uplo = 'U'`) is
-  broken on macOS 27.0.1, in both of its LAPACK interfaces, which share the
+  `tree.map_structure`/`flatten`). torch comes from conda-forge; on linux-64 it
+  is the MKL build, which moves libblas to MKL. Its builds from 2.10 need
+  pybind11-abi 11, which PySCF's xcfun ruled out until conda-forge rebuilt it
+  for abi 11 (seen 2026-10-28): `default` is still locked at torch 2.8,
+  `accelerate`, solved since, at 2.14 (OrbMol energies within 3e-5 kcal/mol of
+  2.8's, its tests pass on both).
+- **BLAS/LAPACK is conda-forge's default in `default` and `psi4`, not Apple's
+  Accelerate; `accelerate` and `psi4-accelerate` are the same two on
+  Accelerate, from macOS 27.2.** On osx-arm64 the default is OpenBLAS (its
+  OpenMP build, the one pytorch accepts); on linux-64 the pytorch build moves
+  it to MKL. numpy, scipy, PySCF, Psi4, xtb, torch and MOIST all link the
+  generic `libblas`/`liblapack`, so `pixi.toml` names a variant only in the
+  `accelerate` feature (`libblas = { build = "*_newaccelerate" }`). That feature
+  runs on a platform of its own with a macOS 27.2 floor, which the other
+  environments leave out (the `default-blas` feature). Accelerate was faster —
+  OrbMol-v2 gradients 3.7x, a PySCF wB97M-V/def2-TZVPPD Fock build 1.4x, a
+  Psi4 wB97X-3c gradient job 1.1-1.5x, PySCF at def2-QZVPPD 1.05x (M4 Pro, 4
+  threads, a 20-atom molecule) — but its Cholesky factorization of the upper
+  triangle (`dpotrf` with `uplo = 'U'`) is broken on macOS 27.0.1, in both of its LAPACK interfaces, which share the
   code. For orders of about 1450-5500 it reads and writes outside its matrix
   (Guard Malloc faults inside Accelerate's `libLAPACK.dylib`; lower-triangle
   `dpotrf`, `getrf`, `syevd` and the other routines checked are clean), and
@@ -609,23 +625,27 @@ The set of things that look weird and aren't. Read before "fixing":
   call it. conda-forge does not pair Accelerate's BLAS with another LAPACK.
   BLIS is not an option either (PySCF gets a NaN Fock matrix), nor pthreads
   OpenBLAS (pytorch excludes it).
-  Apple has fixed this in macOS 27.2, so Accelerate can come back once 27.2
-  is released. The bug is [scipy/scipy#26145](https://github.com/scipy/scipy/issues/26145)
-  (Apple's FB24671487): upper-triangle `dpotrf` only, segfaults at orders
-  2048 and 3000 under Guard Malloc, on an M4 Pro with conda-forge's
-  `*_newaccelerate` build on macOS 27.0. Apple's fix was confirmed there in
-  27.2 beta 3 (26B5101f) on Oct 13, 2026. That issue tested only the newer
-  interface and reports only crashes, not wrong factors. So before switching
-  back: rerun the Guard Malloc loop and check the factor
-  (`L @ L.T` against the input) for orders 1400-5600 through both
-  interfaces on 27.2; restore the two selectors `efe4782` removed, with their
-  notes (`libblas = { version = "*", build = "*_newaccelerate" }` under
-  `[target.osx-arm64.dependencies]` and
-  `[feature.psi4.target.osx-arm64.dependencies]`), and run
-  `pixi update --platform osx-arm64 libblas libcblas liblapack`; and put a
-  macOS 27.2 floor on the platform (`{ name = ..., platform = "osx-arm64",
-  macos = "27.2" }`, as the 15.5 floor was before `efe4782`), so that no
-  older macOS gets the heap corruption back.
+  That bug is [scipy/scipy#26145](https://github.com/scipy/scipy/issues/26145)
+  (Apple's FB24671487), and **macOS 27.2 fixes it.** Checked on 27.2 (26B123),
+  M4 Pro, 2026-10-28, through the legacy, new and new ILP64 interfaces: no
+  Guard Malloc fault and no write outside the matrix at any order from 1000 to
+  6500 (single-threaded too, and with the guard page before the matrix),
+  `info = 0` and a correct factor every time, and the same for `potrf 'L'`,
+  `potri`, `trtri`, `getrf` and `syevd`. The 30-factorization loop ran in 20
+  processes without a crash. psi4-swig-pcm's cavity check passes
+  acetaminophen and the aspirin anion (about 2470 points), which it refused
+  in every conformer before. Psi4 wB97X-3c/vDZP energies in water (ISWIG and
+  SvdW-DROP, phenol to lidocaine) agree with OpenBLAS to 2.4e-7 Ha, within
+  the SCF convergence, and PySCF DF-HF energies and gradients (imatinib,
+  naux 3349) to 2e-12. The new interface's `dpotrf` is 2.4x faster than
+  the legacy one (60 vs 147 ms at n = 5000).
+  One defect is left, harmless here: on 27.2 `dpotrf 'U'` still writes about
+  1.75n entries of the lower triangle next to the diagonal (every order from
+  64 up, both interfaces), which LAPACK says it leaves alone, so scipy 1.18's
+  `cholesky(lower=True)` returns a matrix that is not triangular
+  (`lower=False`, `np.linalg.cholesky` and `cho_solve` are right). The cavity
+  check and PySCF's density fitting read only the triangle; PySCF's TDDFT
+  eigensolver (`tdscf/_lr_eig.py`) inverts it and would be wrong.
 - **D4 composite Hessians fall up to wB97X-V** (`_HESSIAN_FALLBACK`). PySCF
   has no analytical D4 Hessian, but VV10 *is* analytical. Vibrational
   frequencies are insensitive to the dispersion correction, so this is a free

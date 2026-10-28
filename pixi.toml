@@ -1,7 +1,13 @@
 [workspace]
 channels = ["conda-forge"]
 name = "tautomator"
-platforms = ["linux-64", "osx-arm64"]
+platforms = [
+    "linux-64",
+    "osx-arm64",
+    # Only the accelerate environments run here (see [feature.accelerate]).  A platform
+    # that carries a virtual package needs a name of its own.
+    { name = "osx-arm64-macos-27-2", platform = "osx-arm64", macos = "27.2" },
+]
 version = "0.1.0"
 # psi4-swig-pcm (the psi4 feature) is a conda package built from its git source,
 # which pixi still treats as a preview feature (0.82).
@@ -9,6 +15,13 @@ preview = ["pixi-build"]
 # psi4-swig-pcm builds with pixi-build-python >= 0.8, whose build API pixi
 # accepts from 0.71.
 requires-pixi = ">=0.71.0"
+
+# The macOS that source builds (psi4-swig-pcm, MOIST) target.  pixi-build takes it from
+# the platform's macOS, which on the 27.2 platform is newer than any conda-forge
+# deployment target (26.0 at most), so that solve fails without this.  13.0 is what the
+# plain osx-arm64 platform gets anyway, so every environment builds the same packages.
+[workspace.target.osx-arm64.build-variants]
+c_stdlib_version = ["13.0"]
 
 [tasks]
 lint = "ruff check tautomator/ tests/ scripts/"
@@ -63,9 +76,10 @@ geometric = ">=1.0"
 # has no PyPI wheel for CPython 3.13 and whose conda-forge builds need libabseil
 # 2024 (conflicts with current pytorch); it only uses tree.map_structure/flatten,
 # unchanged since, so the pin is overridden below.  conda-forge pytorch >=2.10 is
-# built against pybind11-abi 11 while PySCF's xcfun needs abi 4, so the solver
-# holds torch at 2.8/2.9.  On linux-64 it picks the cpu_mkl build, which
-# switches libblas to MKL.
+# built against pybind11-abi 11, which PySCF's xcfun ruled out until conda-forge
+# rebuilt it for abi 11 (seen 2026-10-28): the default environment is still locked
+# at 2.8, the accelerate one, solved since, at 2.14.  On linux-64 the solver picks
+# the cpu_mkl build, which switches libblas to MKL.
 pytorch = ">=2.8"
 dm-tree = ">=0.1.8"
 ase = ">=3.25,<4"
@@ -79,16 +93,18 @@ python-dateutil = "<3"
 # with numpy temporaries, the kernel alone cost more than a vDZP SCF.
 numba = ">=0.68"
 
-# BLAS/LAPACK is conda-forge's default: OpenBLAS on osx-arm64, MKL on linux-64
-# (through pytorch, above).  Not Apple's Accelerate: its dpotrf on the upper triangle,
-# which scipy's cholesky(lower=True) calls, reads and writes outside its matrix for
-# orders of about 1450-5500 (macOS 27.0.1, in both of its LAPACK interfaces), and the
-# heap it corrupts crashes Python later; through the newer interface it also returns
-# wrong factors.  psi4-swig-pcm's cavity check and PySCF's density fitting call it
-# (README, "Non-obvious design decisions").  Apple has fixed it in macOS 27.2
-# (scipy/scipy#26145, confirmed in 27.2 beta 3), so Accelerate can come back once
-# 27.2 is released, with a 27.2 floor on the platform; the README lists what to
-# check first.
+# BLAS/LAPACK is conda-forge's default in the default and psi4 environments: OpenBLAS
+# on osx-arm64, MKL on linux-64 (through pytorch, above).  Not Apple's Accelerate
+# there: before macOS 27.2 its dpotrf on the upper triangle, which scipy's
+# cholesky(lower=True) calls, reads and writes outside its matrix for orders of about
+# 1450-5500, in both of its LAPACK interfaces, and the heap it corrupts crashes Python
+# later; through the newer interface it also returns wrong factors.  psi4-swig-pcm's
+# cavity check and PySCF's density fitting call it (README, "Non-obvious design
+# decisions").  The accelerate and psi4-accelerate environments (below) take
+# Accelerate on macOS 27.2 and later, where Apple has fixed that.  One defect is left
+# there: dpotrf on the upper triangle still writes into the lower one, so scipy's
+# cholesky(lower=True) returns a matrix that is not triangular.  Nothing here reads
+# that factor beyond its triangle (README).
 
 [pypi-dependencies]
 tautomator = { path = ".", editable = true }
@@ -140,8 +156,36 @@ gcp-correction = ">=2.3.2,<3"
 [feature.moist.dependencies]
 moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "8fbe370cef0194ba0bb19c6118c6bcaed1938e90", subdirectory = "packages/moist" }
 
+# The platforms of the default and psi4 environments: all but the macOS 27.2 one.  An
+# environment gets the platforms its features have in common, and a feature that names
+# none gets them all, so without this both would also be solved for macOS 27.2.
+[feature.default-blas]
+platforms = ["linux-64", "osx-arm64"]
+
+# Apple's Accelerate for BLAS/LAPACK instead of OpenBLAS, on osx-arm64 only, from
+# macOS 27.2: the macOS where Apple fixed the dpotrf heap corruption above
+# (scipy/scipy#26145, Apple's FB24671487), though not its writes into the other
+# triangle.  On an older macOS, installing these environments stops with a
+# virtual-package error.  numpy, scipy, PySCF, xtb, torch and Psi4 all link the generic
+# libblas/liblapack, so this one selector moves them together.  Measured on an M4 Pro
+# at 4 threads on macOS 27.0.1 (README, "Non-obvious design decisions"): Psi4 about
+# 1.4x faster, OrbMol-v2 gradients 3.7x, a PySCF wB97M-V/def2-TZVPPD Fock build 1.4x.
+# Accelerate takes its thread count from VECLIB_MAXIMUM_THREADS, not OMP_NUM_THREADS.
+# "*_newaccelerate" is Accelerate's current LAPACK interface.  "*_accelerate" takes
+# dpotrf from its legacy one, which on macOS 27.2 is 2.4x slower and writes into the
+# other triangle all the same.
+[feature.accelerate]
+platforms = ["osx-arm64-macos-27-2"]
+
+[feature.accelerate.dependencies]
+libblas = { version = "*", build = "*_newaccelerate" }
+
 [environments]
 # Both with MOIST, as the default solvent model needs it.  Every Psi4 job of a run, DROP
 # solvent models included, runs the psi4 environment's one Psi4.
-default = { features = ["moist"], solve-group = "default" }
-psi4 = { features = ["psi4", "moist"], no-default-feature = true }
+default = { features = ["moist", "default-blas"], solve-group = "default" }
+psi4 = { features = ["psi4", "moist", "default-blas"], no-default-feature = true }
+# The same two on Accelerate (osx-arm64, macOS 27.2 and later).  A run in accelerate
+# launches psi4-accelerate's Psi4 (psi4_runner.psi4_environment).
+accelerate = { features = ["accelerate", "moist"] }
+psi4-accelerate = { features = ["psi4", "moist", "accelerate"], no-default-feature = true }

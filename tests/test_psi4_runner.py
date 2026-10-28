@@ -403,7 +403,24 @@ class TestPsi4Executable:
         assert psi4_executable() == on_path
 
     def test_missing_psi4_says_how_to_install_it(self, envs: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="pixi install -e psi4"):
+        with pytest.raises(FileNotFoundError, match="pixi install -e psi4`"):
+            psi4_executable()
+
+    def test_the_accelerate_environment_takes_its_own_psi4(
+        self, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # a run on Accelerate launches the Psi4 on Accelerate, not the default one's
+        monkeypatch.setattr(sys, "prefix", str(envs / "accelerate"))
+        self._psi4_in(envs / "psi4")
+        own = self._psi4_in(envs / "psi4-accelerate")
+        assert psi4_executable() == own
+
+    def test_the_accelerate_environment_does_not_fall_back_to_the_psi4_one(
+        self, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "prefix", str(envs / "accelerate"))
+        self._psi4_in(envs / "psi4")
+        with pytest.raises(FileNotFoundError, match="pixi install -e psi4-accelerate`"):
             psi4_executable()
 
     def test_missing_psi4_stops_the_stage(self, envs: Path) -> None:

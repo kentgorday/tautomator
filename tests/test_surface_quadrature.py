@@ -15,6 +15,11 @@ from tautomator import surface_quadrature as sq
 
 ALPHA = 0.25
 H = 1e-6
+# The ray sum's derivatives in the surface points, normals and areas are 1e-5 to 1e-4 of an
+# integral ~2: at H the differences' rounding (~4e-10) is up to 1e-5 of them, which is
+# more than their tolerance (OpenBLAS's summation order happened to stay just inside it,
+# Accelerate's does not).  At this step they match to ~3e-8 with either BLAS.
+H_SURFACE = 1e-4
 
 
 @pytest.fixture()
@@ -58,20 +63,21 @@ def test_ray_adjoint_matches_differences(sphere: tuple[np.ndarray, ...]) -> None
     values, grads = _gaussian(rays.coords, np.zeros(3))
     ds, dn, da, dR = rays.adjoint(xyz, normals, areas, centres, values, grads)
 
-    def diff(array: np.ndarray, index: tuple[int, ...]) -> float:
+    def diff(array: np.ndarray, index: tuple[int, ...], h: float = H) -> float:
         x0 = array[index]
-        array[index] = x0 + H
+        array[index] = x0 + h
         plus = _outside(xyz, normals, areas, centres)
-        array[index] = x0 - H
+        array[index] = x0 - h
         minus = _outside(xyz, normals, areas, centres)
         array[index] = x0
-        return (plus - minus) / (2.0 * H)
+        return (plus - minus) / (2.0 * h)
 
     for i in (0, 17, 200):
         for k in range(3):
-            assert ds[i, k] == pytest.approx(diff(xyz, (i, k)), rel=1e-6, abs=1e-11)
-            assert dn[i, k] == pytest.approx(diff(normals, (i, k)), rel=1e-6, abs=1e-11)
-        assert da[i] == pytest.approx(diff(areas, (i,)), rel=1e-6, abs=1e-11)
+            fd_s, fd_n = diff(xyz, (i, k), H_SURFACE), diff(normals, (i, k), H_SURFACE)
+            assert ds[i, k] == pytest.approx(fd_s, rel=1e-6, abs=1e-11)
+            assert dn[i, k] == pytest.approx(fd_n, rel=1e-6, abs=1e-11)
+        assert da[i] == pytest.approx(diff(areas, (i,), H_SURFACE), rel=1e-6, abs=1e-11)
     # On the sphere these vanish but for the quadrature's error (~1e-6, of an integral ~2), so
     # the differences' rounding (~1e-10 at this step, more with other thread counts) sets
     # the tolerance
