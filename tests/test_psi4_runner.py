@@ -516,6 +516,22 @@ def test_run_psi4_passes_on_a_gauss_law_warning(
     assert "violates Gauss's law by 1.20e-02" in caplog.text
 
 
+def test_run_psi4_failure_shows_moist_warnings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """MOIST prints its warnings to stdout (from 1.2): a failed job's error shows them."""
+
+    class _Result:
+        returncode = 1
+        stdout = "[Warning] DROP projection did not converge for 3 points\n"
+        stderr = "Traceback (most recent call last): ...\n"
+
+    monkeypatch.setattr(psi4_runner, "psi4_executable", lambda: tmp_path / "psi4")
+    monkeypatch.setattr("tautomator.psi4_runner.subprocess.run", lambda *a, **k: _Result())
+    with pytest.raises(RuntimeError, match=r"(?s)Traceback.*\[Warning\] DROP projection"):
+        psi4_runner._run_psi4("", tmp_path)
+
+
 def _formate() -> Geometry:
     return Geometry(
         symbols=("C", "O", "O", "H"),

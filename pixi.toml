@@ -131,8 +131,8 @@ psi4 = ">=1.11,<2"
 # switching/Gaussian PCM as PySCF's, and a host for MOIST's DROP cavities, with
 # analytical gradients and the nonelectrostatic correction (LGPL-3.0, like Psi4,
 # hence a repository of its own).  Built from source by pixi-build, at the commit
-# `rev` names (its nonelectrostatic-drop branch, until that is on its main).
-psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "8fbe370cef0194ba0bb19c6118c6bcaed1938e90" }
+# `rev` names, on its main.
+psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "19d94d83550389e145a6d829fcdc74170e70e69c" }
 # Psi4's optimizer (optking) converts units through qcelemental's pint registry, which
 # qcelemental 0.51.2 and 0.51.3 cannot build under pint 0.26.2 (pint rejects their
 # "J^{-2}"): with either, psi4.optimize fails.  0.51.4 works with pint 0.26.1 and 0.26.2.
@@ -148,13 +148,13 @@ gcp-correction = ">=2.3.2,<3"
 # tautomator.pyscf_moist, Psi4's through psi4-swig-pcm's MOIST host; the nonelectrostatic
 # correction's gradients on them need the surface contractions the recipe's patch 0002
 # exports.  Built from source by pixi-build, from the recipe in psi4-swig-pcm's repository
-# (packages/moist: pinned to a MOIST release), which psi4-swig-pcm builds its own moist
-# environment from too: one recipe for both.  Only the recipe comes from there; no Psi4 comes
-# with it.  `rev` pins the commit (psi4-swig-pcm's nonelectrostatic-drop branch, until that is
-# on its main), the same as psi4-swig-pcm's above.  The first install compiles MOIST (about 9
-# minutes on 4 cores, once: both environments get the same build).
+# (packages/moist: pinned to a MOIST release, now 1.2.0-alpha), which psi4-swig-pcm builds its
+# own moist environment from too: one recipe for both.  Only the recipe comes from there; no
+# Psi4 comes with it.  `rev` pins the commit, on psi4-swig-pcm's main, the same as
+# psi4-swig-pcm's above.  The first install compiles MOIST (about 9 minutes on 4 cores, once:
+# both environments get the same build).
 [feature.moist.dependencies]
-moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "8fbe370cef0194ba0bb19c6118c6bcaed1938e90", subdirectory = "packages/moist" }
+moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "19d94d83550389e145a6d829fcdc74170e70e69c", subdirectory = "packages/moist" }
 
 # The platforms of the default and psi4 environments: all but the macOS 27.2 one.  An
 # environment gets the platforms its features have in common, and a feature that names

@@ -743,6 +743,29 @@ def _charge_scale(component: Any) -> float:
     return (eps - 1.0) / eps
 
 
+def apparent_charges(view: Any, component: Any) -> Array:
+    """The apparent surface charges q of a MOIST PCM component's latest solve, (ngrid,).
+
+    ``view`` is the evaluated model's component (``model.components[i]``), ``component`` its
+    configuration.  MOIST (from 1.2) publishes a layer model's (IEF-PCM, SS(V)PE, ...) q as
+    ``surface_charge``, and every PCM's potential adjoint w_phi as ``potential_adjoint``, which
+    for the conductor models (C-PCM, COSMO) is q itself.
+    """
+    import moist
+
+    published = {f.name for f in view.fields()}
+    if "surface_charge" in published:
+        return np.asarray(view.get("surface_charge"), dtype=np.float64)
+    conductor = isinstance(component, (moist.ModelComponentCPCM, moist.ModelComponentCOSMO))
+    if conductor and "potential_adjoint" in published:
+        return np.asarray(view.get("potential_adjoint"), dtype=np.float64)
+    raise RuntimeError(
+        f"MOIST {moist.__version__} does not publish the apparent surface charges of "
+        f"{type(component).__name__}, which the charge-derived descriptor needs (MOIST 1.2 "
+        "publishes them after an evaluation); update the moist package (pixi update moist)"
+    )
+
+
 def drop_descriptors(
     mf: Any,
     solvent_rho: float,
@@ -757,13 +780,11 @@ def drop_descriptors(
     point was projected from.
 
     The charges are the apparent surface charges q of MOIST's solve, as PySCF's cavity gives
-    its own (pyscf_nonelectrostatic._surface), read from the PCM component
-    (``model.components[0].get("q")``, which psi4-swig-pcm's packages/moist patch 0003
-    publishes).  They are not the potential adjoint w_phi MOIST hands the host: for C-PCM and
-    COSMO the two are the same, but for IEF-PCM w_phi is the symmetrized adjoint (the
-    symmetric part of the response matrix applied to the potential), which differs from q by
-    0.04% RMS (0.1% at most) on SvdW-DROP for formate; PySCF's own q and q_sym differ by
-    0.3-1.3% RMS.
+    its own (pyscf_nonelectrostatic._surface), read from the PCM component (apparent_charges).
+    They are not the potential adjoint w_phi MOIST hands the host: for C-PCM and COSMO the two
+    are the same, but for IEF-PCM w_phi is the symmetrized adjoint (the symmetric part of the
+    response matrix applied to the potential), which differs from q by 0.04% RMS (0.1% at
+    most) on SvdW-DROP for formate; PySCF's own q and q_sym differ by 0.3-1.3% RMS.
     """
     from tautomator.nonelectrostatic import Descriptors
 
@@ -781,17 +802,8 @@ def drop_descriptors(
     )
     ints = DropTerms(mf.mol, driver, settings).integrals(D)
     driver.evaluate(D)
-    view = driver.model.components[0]
-    if "q" not in {f.name for f in view.fields()}:
-        import moist
-
-        raise RuntimeError(
-            f"MOIST {moist.__version__} does not publish the PCM's apparent surface charges, "
-            "which the charge-derived descriptor needs (psi4-swig-pcm's packages/moist patch "
-            "0003 adds them); update the moist package (pixi update moist)"
-        )
-    charges = np.asarray(view.get("q"), dtype=np.float64)
     (component,) = mf.with_moist.components
+    charges = apparent_charges(driver.model.components[0], component)
     charge_field = -4.0 * np.pi / _charge_scale(component) * charges / ints.areas
     return Descriptors(
         dispersion=ints.dispersion,

@@ -176,33 +176,33 @@ def _replaced() -> dict[str, Callable[..., Any]]:
 
 REPLACED = tuple(_replaced())
 
-# Fingerprints of the REPLACED functions, with the MOIST releases that have them;
-# tests/test_pyscf_moist.py passed on each release.
+# Fingerprints of the REPLACED functions, with the MOIST releases that have them (as
+# psi4-swig-pcm's packages/moist versions them); tests/test_pyscf_moist.py passed on each release.
 CHECKED: dict[str, dict[str, str]] = {
-    "PySCFHost.__init__": {"b6c90f0c12ceaf61": "1.1.0a1"},
-    "PySCFHost.structure": {"9c4b46ffe62bdfbf": "1.1.0a1"},
-    "PySCFHost.surface_potential": {"677e67318603aebe": "1.1.0a1"},
-    "PySCFHost.surface_potential_gradient": {"6633f10092b2f482": "1.1.0a1"},
-    "PySCFHost._grad_phi_elec": {"ad591f1431834954": "1.1.0a1"},
-    "PySCFHost.fock_potential": {"7fa9ed51827b8e71": "1.1.0a1"},
-    "PySCFHost._gradient_phi": {"a024fca9455e4579": "1.1.0a1"},
-    "PySCFHost._dphi_dxi": {"f64b07703c729dc9": "1.1.0a1"},
-    "PySCFHost._fock_lsf": {"b223cd2fc52047d6": "1.1.0a1"},
-    "PySCFHost._gradient_lsf": {"c5e1aa9273db56b5": "1.1.0a1"},
-    "PySCFHost._density_matrix": {"ae774fa2f988738b": "1.1.0a1"},
-    "PySCFHost._ao": {"9091301fa653ad09": "1.1.0a1"},
-    "_int3c1e": {"f2a42d138a3e0fde": "1.1.0a1"},
-    "_component_index": {"5812d4d8640965b2": "1.1.0a1"},
-    "PySCFSolvation.__init__": {"1a55a55d81f6db79": "1.1.0a1"},
-    "PySCFSolvation.evaluate": {"042abd787272eb96": "1.1.0a1"},
-    "PySCFSolvation._answer": {"3795f6393aa2008e": "1.1.0a1"},
-    "PySCFSolvation._fock": {"52d505a93d53244e": "1.1.0a1"},
-    "PySCFSolvation.gradient_channels": {"10d8e946ea90216c": "1.1.0a1"},
-    "_MoistState.__init__": {"fbf20468196806ea": "1.1.0a1"},
-    "_MoistState.copy": {"be5a440261f32b5a": "1.1.0a1"},
-    "_MoistState._driver": {"901729c736dc61b5": "1.1.0a1"},
-    "_MoistState._molecule_key": {"e5572962cd09b510": "1.1.0a1"},
-    "moist_for_scf": {"b7aafec165713d60": "1.1.0a1"},
+    "PySCFHost.__init__": {"b6c90f0c12ceaf61": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost.structure": {"9c4b46ffe62bdfbf": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost.surface_potential": {"677e67318603aebe": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost.surface_potential_gradient": {"6633f10092b2f482": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._grad_phi_elec": {"ad591f1431834954": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost.fock_potential": {"7fa9ed51827b8e71": "1.1.0a1", "89e9c07837226c1b": "1.2.0a0"},
+    "PySCFHost._gradient_phi": {"a024fca9455e4579": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._dphi_dxi": {"f64b07703c729dc9": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._fock_lsf": {"b223cd2fc52047d6": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._gradient_lsf": {"c5e1aa9273db56b5": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._density_matrix": {"ae774fa2f988738b": "1.1.0a1, 1.2.0a0"},
+    "PySCFHost._ao": {"9091301fa653ad09": "1.1.0a1, 1.2.0a0"},
+    "_int3c1e": {"f2a42d138a3e0fde": "1.1.0a1, 1.2.0a0"},
+    "_component_index": {"5812d4d8640965b2": "1.1.0a1, 1.2.0a0"},
+    "PySCFSolvation.__init__": {"1a55a55d81f6db79": "1.1.0a1, 1.2.0a0"},
+    "PySCFSolvation.evaluate": {"042abd787272eb96": "1.1.0a1, 1.2.0a0"},
+    "PySCFSolvation._answer": {"3795f6393aa2008e": "1.1.0a1", "13b66cdb0545c83c": "1.2.0a0"},
+    "PySCFSolvation._fock": {"52d505a93d53244e": "1.1.0a1, 1.2.0a0"},
+    "PySCFSolvation.gradient_channels": {"10d8e946ea90216c": "1.1.0a1, 1.2.0a0"},
+    "_MoistState.__init__": {"fbf20468196806ea": "1.1.0a1, 1.2.0a0"},
+    "_MoistState.copy": {"be5a440261f32b5a": "1.1.0a1, 1.2.0a0"},
+    "_MoistState._driver": {"901729c736dc61b5": "1.1.0a1, 1.2.0a0"},
+    "_MoistState._molecule_key": {"e5572962cd09b510": "1.1.0a1, 1.2.0a0"},
+    "moist_for_scf": {"b7aafec165713d60": "1.1.0a1, 1.2.0a0"},
 }
 
 
@@ -365,8 +365,10 @@ class MoistHost(mp.PySCFHost):  # type: ignore[misc]
         )
         return kernel @ self.mol.atom_charges() - electronic  # type: ignore[no-any-return]
 
-    def fock_potential(self, coords: Array, xi: Array, w_phi: Array) -> Array:
+    def fock_potential(self, coords: Array, xi: Array | None, w_phi: Array) -> Array:
         """sum_i w_phi_i dphi_i/dP = -sum_i w_phi_i (i|mn), from (k|mn) kept or blocked."""
+        if xi is None:  # point potentials (MOIST >= 1.2, PCMParameters(point_potential=True))
+            return super().fock_potential(coords, xi, w_phi)  # type: ignore[no-any-return]
         coords, xi, w = np.asarray(coords), np.asarray(xi), np.asarray(w_phi)
         B, _ = self._integrals(coords, xi)
         if B is not None:

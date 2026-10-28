@@ -285,6 +285,27 @@ class TestHost:
         assert fast.host._fused is None
 
     @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
+    def test_point_potential_is_left_to_moist(self, fell_through: list[str], cavity: Any) -> None:
+        """PCMParameters(point_potential=True) (MOIST >= 1.2): a Gaussian surface coupled
+        through point integrals, which MoistHost leaves to MOIST's host, with the same result."""
+        if not hasattr(moist.PCMParameters(), "point_potential"):
+            pytest.skip(f"MOIST {moist.__version__} has no point_potential")
+        mol = _mol(MOLECULES["formate"])
+        dm = _density(mol)
+
+        def components() -> list[Any]:
+            point = moist.PCMParameters(point_potential=True)
+            return [ModelComponentIEFPCM(EPS, parameters=point)]
+
+        stock = mp.PySCFSolvation(mol, cavity(), components(), context=CONTEXT)
+        fast = MoistSolvation(mol, cavity(), components(), context=CONTEXT)
+        _same(fast.evaluate(dm).energy, stock.evaluate(dm).energy)
+        _same(fast.fock, stock.fock)
+        _same(fast.gradient(dm), stock.gradient(dm))
+        assert fast._xi is None
+        assert {"surface_potential", "fock_potential", "_gradient_phi"} <= set(fell_through)
+
+    @pytest.mark.parametrize("cavity", [svdw_drop, rho_drop])
     def test_integrals_that_do_not_fit_are_blocked(
         self, monkeypatch: pytest.MonkeyPatch, fell_through: list[str], cavity: Any
     ) -> None:

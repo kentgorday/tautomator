@@ -430,10 +430,11 @@ cavity) gives the same `Descriptors`:
 per surface point the area, the solute's normal field, the PCM's apparent
 surface charge recast as a field (its correlation with the normal field is 0.97
 on formate) and the atom whose sphere the point was projected from. The charges
-are MOIST's apparent charges q (psi4-swig-pcm's `packages/moist` patch 0003
-publishes them), as PySCF's cavity uses its own: not the potential adjoint
-w_phi MOIST hands the host, which for IEF-PCM is the symmetrized adjoint and
-differs from q: by 0.04% RMS (0.1% at most) on SvdW-DROP for formate, and on
+are MOIST's apparent charges q (which MOIST 1.2 publishes as the PCM
+component's `surface_charge`), as PySCF's cavity uses its own: not the
+potential adjoint w_phi MOIST hands the host, which for IEF-PCM is the
+symmetrized adjoint and differs from q: by 0.04% RMS (0.1% at most) on
+SvdW-DROP for formate, and on
 PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
 methylammonium, water). (For C-PCM and COSMO, which tautomator does not run,
 the two are equal.) The file's settings name the charges (`charge_field`) and record the

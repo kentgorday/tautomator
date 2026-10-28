@@ -517,15 +517,16 @@ The set of things that look weird and aren't. Read before "fixing":
   it: MOIST has no conda-forge or PyPI package, and the rattler-build recipe
   that builds it lives in psi4-swig-pcm (`packages/moist`), so that both
   repositories build MOIST from one recipe. `pixi.toml` pins the commit (`rev`,
-  the same as `psi4-swig-pcm`'s), which has the recipe's patches 0002 and
-  0003: the surface contractions the nonelectrostatic correction's gradients
-  need on DROP cavities, and the PCM's apparent surface charges, which its
-  descriptors are built from. Change the recipe there, not here; its README
-  ("The moist package") lists what it must keep for tautomator: the same
-  Python; BLAS/LAPACK from the environment (MKL on linux-64, OpenBLAS on
-  osx-arm64), by building against the netlib variants of `libblas`/`liblapack`;
-  and MOIST's Fortran libraries linked statically into its extension and not
-  installed, so they cannot clash with the `mctc-lib` xtb brings in. Its
+  the same as `psi4-swig-pcm`'s), which has the recipe's patch 0002: the
+  surface contractions the nonelectrostatic correction's gradients need on
+  DROP cavities. (The PCM's apparent surface charges, which its descriptors
+  are built from, MOIST publishes itself from 1.2.) Change the recipe there,
+  not here; its README ("The moist package") lists what it must keep for
+  tautomator: the same Python; BLAS/LAPACK from the environment (MKL on
+  linux-64, OpenBLAS on osx-arm64), by building against the netlib variants
+  of `libblas`/`liblapack`; and MOIST's Fortran libraries linked statically
+  into its extension and not installed, so they cannot clash with the
+  `mctc-lib` xtb brings in. Its
   `tests/test_moist_build.py` checks the build. The `psi4` environment has
   MOIST too, for the DROP cavities on the psi4 driver, rather than a second Psi4
   environment of its own: every Psi4 job of a run then comes from one

@@ -587,9 +587,12 @@ def _run_psi4(
         output_text = output_path.read_text()
 
     if result.returncode != 0:
+        # MOIST (>= 1.2) prints its warnings to stdout, not stderr
+        stdout = f"stdout: {result.stdout[-2000:]}\n" if result.stdout.strip() else ""
         raise RuntimeError(
             f"Psi4 failed (exit {result.returncode}):\n"
             f"stderr: {result.stderr[-2000:]}\n"
+            f"{stdout}"
             f"output (last 2000 chars): {output_text[-2000:]}"
         )
 
