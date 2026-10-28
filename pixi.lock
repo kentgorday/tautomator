@@ -218,7 +218,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/xtb-6.7.1-gfortran_hc17bbfb_5.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - conda_source: moist[fccdd541] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[ef5ae380] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/03/1d/8e61628ffea42a56c0f8bc251e71344d7e2c43bc61f0e43dae22a1ca8ce6/orb_models-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl
@@ -464,7 +464,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/unidecode-1.4.0-pyhcf101f3_1.conda
-      - conda_source: moist[a77ecc7c] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[d50d4d26] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/03/1d/8e61628ffea42a56c0f8bc251e71344d7e2c43bc61f0e43dae22a1ca8ce6/orb_models-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl
@@ -697,7 +697,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/xtb-6.7.1-gfortran_hc17bbfb_5.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - conda_source: moist[fccdd541] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[ef5ae380] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/03/1d/8e61628ffea42a56c0f8bc251e71344d7e2c43bc61f0e43dae22a1ca8ce6/orb_models-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl
@@ -848,8 +848,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/typing-inspection-0.4.4-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
-      - conda_source: moist[a77ecc7c] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
-      - conda_source: psi4-swig-pcm[9edc2d82] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[d50d4d26] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
+      - conda_source: psi4-swig-pcm[fecbf432] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/annotated-types-0.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.19-hbd8a1cb_0.conda
@@ -947,8 +947,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/toml-f-0.5.2-gfortran_h04795c8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h74c22ad_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - conda_source: moist[fccdd541] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
-      - conda_source: psi4-swig-pcm[00ab8832] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[ef5ae380] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
+      - conda_source: psi4-swig-pcm[c13b06bf] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
   psi4-accelerate:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -1049,8 +1049,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/toml-f-0.5.2-gfortran_h04795c8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h74c22ad_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - conda_source: moist[fccdd541] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
-      - conda_source: psi4-swig-pcm[00ab8832] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+      - conda_source: moist[ef5ae380] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
+      - conda_source: psi4-swig-pcm[c13b06bf] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -9823,7 +9823,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/scipy?source=hash-mapping
+  - pkg:pypi/scipy?source=compressed-mapping
   run_exports: {}
   size: 14162801
   timestamp: 1791887922440
@@ -10170,7 +10170,7 @@ packages:
     - zstd >=1.5.7,<1.6.0a0
   size: 433687
   timestamp: 1786599629846
-- conda_source: moist[a77ecc7c] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+- conda_source: moist[d50d4d26] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
   version: 1.2.0a0
   build: hb0f4dca_0
   subdir: linux-64
@@ -10275,7 +10275,7 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.13-9_cp313.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/setuptools-84.2.1-pyhe730653_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
-- conda_source: moist[fccdd541] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+- conda_source: moist[ef5ae380] @ git+https://github.com/kentgorday/psi4-swig-pcm?subdirectory=packages%2Fmoist&rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
   version: 1.2.0a0
   build: h60d57d3_0
   subdir: osx-arm64
@@ -10394,7 +10394,7 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.13.18-hb59dee6_100_cp313.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
-- conda_source: psi4-swig-pcm[00ab8832] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+- conda_source: psi4-swig-pcm[c13b06bf] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
   version: 0.1.0
   build: hea27dcd_0
   subdir: osx-arm64
@@ -10551,7 +10551,7 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/uv-0.13.6-hbb8eed7_0.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h74c22ad_3.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-- conda_source: psi4-swig-pcm[9edc2d82] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=19d94d83550389e145a6d829fcdc74170e70e69c#19d94d83550389e145a6d829fcdc74170e70e69c
+- conda_source: psi4-swig-pcm[fecbf432] @ git+https://github.com/kentgorday/psi4-swig-pcm?rev=f8504c713248ec285ff66d17d07728072f8eca2f#f8504c713248ec285ff66d17d07728072f8eca2f
   version: 0.1.0
   build: ha35fb5c_0
   subdir: linux-64

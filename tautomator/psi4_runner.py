@@ -587,7 +587,7 @@ def _run_psi4(
         output_text = output_path.read_text()
 
     if result.returncode != 0:
-        # MOIST (>= 1.2) prints its warnings to stdout, not stderr
+        # MOIST prints to stdout (psi4-swig-pcm copies its warnings to stderr as well)
         stdout = f"stdout: {result.stdout[-2000:]}\n" if result.stdout.strip() else ""
         raise RuntimeError(
             f"Psi4 failed (exit {result.returncode}):\n"

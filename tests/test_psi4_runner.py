@@ -516,10 +516,8 @@ def test_run_psi4_passes_on_a_gauss_law_warning(
     assert "violates Gauss's law by 1.20e-02" in caplog.text
 
 
-def test_run_psi4_failure_shows_moist_warnings(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """MOIST prints its warnings to stdout (from 1.2): a failed job's error shows them."""
+def test_run_psi4_failure_shows_stdout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """MOIST prints to stdout: a failed job's error shows the tail of stdout too."""
 
     class _Result:
         returncode = 1

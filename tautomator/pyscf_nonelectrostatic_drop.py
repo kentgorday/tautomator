@@ -516,7 +516,8 @@ class DropTerms:
                 "nonelectrostatic correction's gradient and self-consistent Fock matrix need "
                 "(moist_contract_cavity_surface_gradient and _density): they come from "
                 "psi4-swig-pcm's packages/moist recipe (patches/0002).  Energies and "
-                "descriptors work without them.  Update the moist package (pixi update moist)."
+                "descriptors work without them.  Install the moist package pixi.toml pins "
+                "(pixi install)."
             )
 
     def _density_weights(self, out: _Pass) -> Any:
@@ -749,7 +750,10 @@ def apparent_charges(view: Any, component: Any) -> Array:
     ``view`` is the evaluated model's component (``model.components[i]``), ``component`` its
     configuration.  MOIST (from 1.2) publishes a layer model's (IEF-PCM, SS(V)PE, ...) q as
     ``surface_charge``, and every PCM's potential adjoint w_phi as ``potential_adjoint``, which
-    for the conductor models (C-PCM, COSMO) is q itself.
+    for the conductor models (C-PCM, COSMO) is q itself.  It lists both only while the charges
+    are current: from an evaluation until the model is updated to a new structure, and not
+    after a failed solve.  tautomator runs IEF-PCM only (config.DROP_COMPONENT), so the
+    conductor branch is not exercised.
     """
     import moist
 
@@ -760,9 +764,10 @@ def apparent_charges(view: Any, component: Any) -> Array:
     if conductor and "potential_adjoint" in published:
         return np.asarray(view.get("potential_adjoint"), dtype=np.float64)
     raise RuntimeError(
-        f"MOIST {moist.__version__} does not publish the apparent surface charges of "
-        f"{type(component).__name__}, which the charge-derived descriptor needs (MOIST 1.2 "
-        "publishes them after an evaluation); update the moist package (pixi update moist)"
+        f"MOIST {moist.__version__} publishes no apparent surface charges for "
+        f"{type(component).__name__}, which the charge-derived descriptor needs: either the "
+        "model has no current solve (evaluate it after its last update), or the moist package "
+        "predates 1.2 (pixi install installs the one pixi.toml pins)"
     )
 
 

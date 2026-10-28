@@ -577,7 +577,8 @@ def _attach_drop(mf: Any, cavity: str, eps: float, threads: int, hydrogen_radius
             "(pixi install; the first install compiles it)"
         ) from err
     component = getattr(moist, DROP_COMPONENT)(eps)
-    context = moist.Context(nthreads=threads, verbosity=0)
+    # MOIST prints its warnings to stdout; a copy on stderr keeps them with tautomator's log.
+    context = moist.Context(nthreads=threads, verbosity=0, warnings_to_stderr=True)
     return attach(
         mf,
         cavity=drop_cavity(cavity, hydrogen_radius=hydrogen_radius),

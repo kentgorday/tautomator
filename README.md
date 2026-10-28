@@ -526,16 +526,15 @@ The set of things that look weird and aren't. Read before "fixing":
   linux-64, OpenBLAS on osx-arm64), by building against the netlib variants
   of `libblas`/`liblapack`; and MOIST's Fortran libraries linked statically
   into its extension and not installed, so they cannot clash with the
-  `mctc-lib` xtb brings in. Its
-  `tests/test_moist_build.py` checks the build. The `psi4` environment has
-  MOIST too, for the DROP cavities on the psi4 driver, rather than a second Psi4
-  environment of its own: every Psi4 job of a run then comes from one
-  environment, so a solvation energy never subtracts energies from two
-  installs that could have drifted apart, and a separate one would isolate
-  nothing (it would have to share the `psi4` environment's solve group, so
-  MOIST's dependencies would constrain that one anyway). The price is that
-  the first `pixi install` (and `pixi install -e psi4`) compiles MOIST (about
-  9 minutes on 4 cores).
+  `mctc-lib` xtb brings in. Its `tests/test_moist_build.py` checks the build.
+  The `psi4` environment has MOIST too, for the DROP cavities on the psi4
+  driver, rather than a second Psi4 environment of its own: every Psi4 job of a
+  run then comes from one environment, so a solvation energy never subtracts
+  energies from two installs that could have drifted apart, and a separate one
+  would isolate nothing (it would have to share the `psi4` environment's solve
+  group, so MOIST's dependencies would constrain that one anyway). The price is
+  that the first `pixi install` (and `pixi install -e psi4`) compiles MOIST
+  (about 9 minutes on 4 cores).
 - **`xtb` is floored at `>=6.7.1` in `pixi.toml`.** Pressure on `mctc-lib`
   has made the solver fall back to the ancient `xtb` 6.4.1 (the last release
   with no `mctc-lib` dependency) before; that was `gcp-correction` 2.3.2

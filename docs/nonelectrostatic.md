@@ -398,7 +398,7 @@ models hand their cavity: its reverse pass contracts it into the nuclear
 gradient (the anchor, switching and level-set field routes), and on rho-DROP
 into density weights, conjugate to rho and its first two derivatives on the
 grid, which give the Fock term (against d rho/dD) and the density's route in
-the gradient (against d rho/dR at fixed D). MOIST 1.1.0a1 does not export the
+the gradient (against d rho/dR at fixed D). MOIST 1.2.0a0 does not export the
 two contractions; psi4-swig-pcm's `packages/moist` recipe adds them
 (`patches/0002`, `moist_contract_cavity_surface_gradient` and `_density`,
 validated against the cavity rebuilt at displaced nuclei). Energies and
@@ -434,14 +434,14 @@ are MOIST's apparent charges q (which MOIST 1.2 publishes as the PCM
 component's `surface_charge`), as PySCF's cavity uses its own: not the
 potential adjoint w_phi MOIST hands the host, which for IEF-PCM is the
 symmetrized adjoint and differs from q: by 0.04% RMS (0.1% at most) on
-SvdW-DROP for formate, and on
-PySCF's cavity, between its own q and q_sym, by 0.3-1.3% RMS (formate,
-methylammonium, water). (For C-PCM and COSMO, which tautomator does not run,
-the two are equal.) The file's settings name the charges (`charge_field`) and record the
-cavity, its spheres (`drop_radii`: PySCF's cavity's, with `pcm_hydrogen_radius`;
-a file without the key is from before, on MOIST's own CPCM radii), MOIST's grid
-and pruning level (`drop_nleb`, `drop_prune_level`) and the quadrature
-(`volume_rule`, `ray_rule`, `partition_a`).
+SvdW-DROP for formate, and on PySCF's cavity, between its own q and q_sym, by
+0.3-1.3% RMS (formate, methylammonium, water). (For C-PCM and COSMO, which
+tautomator does not run, the two are equal.) The file's settings name the
+charges (`charge_field`) and record the cavity, its spheres (`drop_radii`:
+PySCF's cavity's, with `pcm_hydrogen_radius`; a file without the key is from
+before, on MOIST's own CPCM radii), MOIST's grid and pruning level
+(`drop_nleb`, `drop_prune_level`) and the quadrature (`volume_rule`,
+`ray_rule`, `partition_a`).
 
 **How fine the grids need to be, in kcal/mol.** The same 42 solutes as on
 PySCF's cavity (25 neutrals, 17 ions; wB97X-3c/vDZP, density fixed), rough
