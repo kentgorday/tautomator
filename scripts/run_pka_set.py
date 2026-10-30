@@ -62,7 +62,8 @@ def make_toml(
     in implicit solvent, and that OrbMol has no implicit solvent and needs a
     separate single point.
     """
-    safe_smi = smi.replace('"', '\\"')
+    # A TOML basic string: escape the backslashes of E/Z bonds before the quotes.
+    safe_smi = smi.replace("\\", "\\\\").replace('"', '\\"')
     return f'''\
 protocol = "{protocol}"
 

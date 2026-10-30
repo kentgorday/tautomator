@@ -1,8 +1,9 @@
-"""scripts/run_mnsol_set.py's choice of cavities (the script itself needs the MNSol set)."""
+"""scripts/run_mnsol_set.py's config text and cavities (the script itself needs the MNSol set)."""
 
 from __future__ import annotations
 
 import importlib.util
+import tomllib
 from pathlib import Path
 from types import ModuleType
 
@@ -39,3 +40,10 @@ def test_a_solvent_run_writes_its_cavity_and_a_gas_run_none() -> None:
     gas = script.make_toml(*args, "gas", Path("out"), "pyscf", 1, 4.0, "fast", "ISWIG")
     assert 'cavity = "ISWIG"' in water and "solvent_model" not in water
     assert 'cavity = "none"' in gas
+
+
+@pytest.mark.parametrize("smiles", ["Cl/C=C\\Cl", "CNC(=O)O/N=C(\\C)SC", "C/C=C(\\[O-])CC"])
+def test_a_smiles_with_backslashes_reaches_the_config_unchanged(smiles: str) -> None:
+    # the MNSol set's three E/Z rows: 0171Zdi, test1037 and i086
+    text = _script().make_toml(smiles, 0, "water", Path("out"), "pyscf", 1, 4.0, "fast", "ISWIG")
+    assert tomllib.loads(text)["molecule"]["smiles"] == smiles

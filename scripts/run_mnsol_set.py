@@ -118,7 +118,8 @@ def make_toml(
     the gas phase.  The descriptors are not in the config: main() asks run_pipeline
     for them.
     """
-    safe_smiles = smiles.replace('"', '\\"')
+    # A TOML basic string: escape the backslashes of E/Z bonds before the quotes.
+    safe_smiles = smiles.replace("\\", "\\\\").replace('"', '\\"')
     gas = medium == "gas"
     scoring = f'[scoring]\ncavity = "{"none" if gas else cavity}"\n\n'
     return f'''\
