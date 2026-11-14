@@ -62,6 +62,36 @@ matters most — DFT optimization relaxes a large fraction of distinct sampled
 conformers onto the same minimum. Scoring does not deduplicate, since it does
 not move geometries. See [docs/symmetry.md](docs/symmetry.md).
 
+Before refinement optimizes a conformer that has a symmetry operation (a flat
+NH2, coplanar rings, a CCl3 or methyl with an atom in a mirror plane, a
+threefold propeller), it moves it 0.3 Å along its softest GFN2 mode that breaks
+the symmetry, if that mode is under 300 cm⁻¹ (`refinement.nudge`, on by default;
+`tautomator.nudge`). The gradient along such a mode is exactly zero at the
+symmetric shape, so without the nudge an optimizer started there stays even when
+the shape is a saddle on the refinement surface, and the ensemble keeps a
+hilltop in place of the minimum beside it. GFN2 often calls these hilltops
+minima, but its soft mode still points the right way. When a nudged conformer
+comes back with less symmetry than it started with, it is averaged over its
+images under the sampled symmetry and that symmetric shape is optimized (it
+stays symmetric, a few steps); if it is under 0.075 kcal/mol higher it replaces
+the result, so a nearly free rotor is not counted as a mirror pair of wells that
+do not exist. Before deduplication the same rule runs across each microstate: a
+conformer within 0.075 kcal/mol of a more symmetric one close beside it is
+folded into it, which catches a shallow well reached from two starts, and such
+pairs sampling handed over unnudged. Conformers with no symmetry are not nudged:
+no symmetry holds their optimizer on a saddle, and a push only trades one basin
+for another. The nudge does not clear every saddle. It tries one mode, so a
+second soft group can stay on its hilltop, and a conformer with no symmetry can
+still stop on a gentle saddle ([docs/nudge.md](docs/nudge.md), Limits).
+
+The nudge is not free. Any conformer with a planar heavy-atom frame and a soft
+out-of-plane mode is a candidate, so a third of the sampled conformers in the
+MNSol runs are nudged, and each takes about 1.7 times the optimization steps it
+would unnudged, 12–23% more refinement optimization steps in all. Most come
+straight back: in the MNSol runs tested, a third of the nudged conformers ended
+lower, by up to 2.6 kcal/mol, and none higher. See
+[docs/nudge.md](docs/nudge.md) for how the constants were chosen.
+
 Microstates in the RDKit-first path are identified by `protomer_key`, not by
 canonical SMILES. Two SMILES that describe one species with a delocalised charge
 written on different atoms — a 4-substituted imidazolium, an enolate — are

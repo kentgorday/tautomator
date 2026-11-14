@@ -132,12 +132,17 @@ relabelled. It passes `ethr_kcal=0.05`, adding the energy criterion CREGEN pairs
 with its RMSD threshold: CREST geometries are not converged tightly enough for
 proximity alone to mean two structures share a well.
 
-**Refinement** (`refinement.refine`) runs in two passes. Every conformer is
-optimized first, then duplicates are collapsed, then only the survivors get a
-Hessian. DFT optimization routinely relaxes distinct sampled conformers onto one
-minimum — around 40% of the ensemble — so deduplicating between the passes avoids
-paying for the same frequencies twice. No energy criterion is used here;
-optimized duplicates agree to well under 0.01 kcal/mol anyway.
+**Refinement** (`refinement.refine`) optimizes every conformer first, then
+collapses duplicates, then gives only the survivors a Hessian. DFT optimization
+routinely relaxes distinct sampled conformers onto one minimum — around 40% of
+the ensemble — so deduplicating before the Hessians avoids paying for the same
+frequencies twice. No energy criterion is used here; optimized duplicates agree
+to well under 0.01 kcal/mol anyway. With `refinement.nudge` on (the default), a
+symmetric conformer is nudged off its symmetry before it is optimized, so it is
+not left on a symmetric saddle, and before deduplication a shallow
+off-symmetric well beside a more symmetric conformer is folded into it, so the
+two are not counted as a mirror pair. Both change which conformers there are,
+not how they are weighed; see [nudge.md](nudge.md).
 
 **Scoring** does not deduplicate. It does not move geometries, so the symmetry
 analysis from refinement still holds and the multiplicities carry through.

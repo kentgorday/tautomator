@@ -10,11 +10,13 @@ from tautomator.conformer_symmetry import (
     DEFAULT_RTHR,
     MAX_MAPPINGS,
     _candidate_mappings,
+    best_max_distance,
     best_rmsd,
     conformer_multiplicity,
     deduplicate,
     effective_energy_offset,
     symmetry_number,
+    symmetry_operations,
 )
 from tautomator.ensemble import HARTREE_TO_KCAL
 from tautomator.sampling import _filter_by_energy_window
@@ -92,6 +94,49 @@ class TestBestRmsd:
         a, syms = _water()
         b, _ = _water(twist=1.5)
         assert best_rmsd(a, b, syms) > DEFAULT_RTHR
+
+
+class TestBestMaxDistance:
+    def test_relabelled_and_rotated_copy_is_found(self) -> None:
+        rng = np.random.default_rng(0)
+        perm = np.array([2, 1, 3, 0, 4, 6, 7, 5])
+        moved = METHYLAMMONIUM[perm] @ _rand_rotation(rng).T + rng.normal(size=3) * 5
+        assert best_max_distance(METHYLAMMONIUM, moved, METHYLAMMONIUM_SYMBOLS) < 1e-4
+
+    def test_scores_the_farthest_atom(self) -> None:
+        # One ammonium hydrogen moved 0.3 A: the superposition shares the move out
+        # a little, and the RMSD dilutes it over all eight atoms.
+        moved = METHYLAMMONIUM.copy()
+        moved[5] += [0.0, 0.0, 0.3]
+        farthest = best_max_distance(METHYLAMMONIUM, moved, METHYLAMMONIUM_SYMBOLS)
+        assert 0.2 < farthest <= 0.3
+        assert best_rmsd(METHYLAMMONIUM, moved, METHYLAMMONIUM_SYMBOLS) < farthest / 2
+
+    def test_mirror_image_only_on_request(self) -> None:
+        chiral = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.1, 0.0], [0.0, 0.0, 0.8]])
+        symbols = ["C", "F", "Cl", "Br"]
+        mirrored = chiral * np.array([1.0, 1.0, -1.0])
+        assert best_max_distance(chiral, mirrored, symbols) > DEFAULT_RTHR
+        assert best_max_distance(chiral, mirrored, symbols, mirror=True) < 1e-6
+
+
+class TestSymmetryOperations:
+    def test_water_has_its_three(self) -> None:
+        coords, syms = _water()
+        assert len(symmetry_operations(coords, syms)) == 3  # C2 and two mirrors
+
+    def test_methylammonium_has_its_five(self) -> None:
+        ops = symmetry_operations(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS)
+        assert sorted(bool(np.linalg.det(r) < 0) for _, r in ops) == [False] * 2 + [True] * 3
+
+    def test_a_chiral_centre_has_none(self) -> None:
+        chiral = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.1, 0.0], [0.0, 0.0, 0.8]])
+        assert symmetry_operations(chiral, ["C", "F", "Cl", "Br"]) == []
+
+    def test_each_operation_maps_the_structure_onto_itself(self) -> None:
+        x = METHYLAMMONIUM - METHYLAMMONIUM.mean(axis=0)
+        for perm, rot in symmetry_operations(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS):
+            assert np.abs(x[perm] @ rot.T - x).max() < DEFAULT_RTHR
 
 
 class TestDeduplicate:

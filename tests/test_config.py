@@ -1353,3 +1353,18 @@ class TestPcmRadii:
         default, wider = pcm_radii(1.1), pcm_radii(1.3)
         assert wider[1] == pytest.approx(1.2 * 1.3 / BOHR)
         np.testing.assert_array_equal(np.delete(default, 1), np.delete(wider, 1))
+
+
+class TestNudgeSetting:
+    def test_on_by_default_and_recorded(self, tmp_toml: Callable[[str], Path]) -> None:
+        cfg = load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n'))
+        assert cfg.refinement.nudge is True
+        assert cfg.provenance()["refinement"]["nudge"] is True
+
+    def test_can_be_turned_off(self, tmp_toml: Callable[[str], Path]) -> None:
+        cfg = load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n[refinement]\nnudge = false\n'))
+        assert cfg.refinement.nudge is False
+
+    def test_refuses_anything_but_a_boolean(self, tmp_toml: Callable[[str], Path]) -> None:
+        with pytest.raises(ValueError, match="nudge must be true or false"):
+            load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n[refinement]\nnudge = "yes"\n'))

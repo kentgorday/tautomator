@@ -26,6 +26,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import numpy as np
+
 from tautomator.config import alpb_name
 from tautomator.types import Geometry
 from tautomator.xyz_io import read_multi_xyz, write_xyz
@@ -190,6 +192,49 @@ def frequencies(
     """
     if geom.n_atoms == 1:
         return []
+    return _parse_g98_frequencies(
+        _run_hessian(geom, charge, gfn, solvent, biased, threads, work_dir, "g98.out")
+    )
+
+
+def normal_modes(
+    geom: Geometry,
+    charge: int = 0,
+    gfn: int = 2,
+    solvent: str | None = None,
+    biased: bool = False,
+    threads: int | None = None,
+) -> tuple[list[float], np.ndarray]:
+    """Frequencies (cm**-1) and Cartesian normal modes from an xtb Hessian.
+
+    The modes are rebuilt from xtb's full-precision ``hessian`` file rather than
+    read from g98.out, whose vectors are the eigenvectors of the mass-weighted
+    Hessian rounded to two decimals: taken as displacements they move heavy
+    atoms too far, light ones too little, and carry some rigid rotation.  See
+    `_cartesian_modes`.  The frequencies agree with xtb's own to a fraction of a
+    cm**-1; its table of atomic masses differs from RDKit's in the last digits.
+
+    Returns the frequencies in ascending order, imaginary ones as negatives, and
+    their modes as an array of shape (n_modes, n_atoms, 3), each of unit norm, in
+    the input geometry's frame and atom order.
+    """
+    if geom.n_atoms == 1:
+        return [], np.zeros((0, 1, 3))
+    text = _run_hessian(geom, charge, gfn, solvent, biased, threads, None, "hessian")
+    return _cartesian_modes(geom, _parse_hessian(text, geom.n_atoms))
+
+
+def _run_hessian(
+    geom: Geometry,
+    charge: int,
+    gfn: int,
+    solvent: str | None,
+    biased: bool,
+    threads: int | None,
+    work_dir: Path | None,
+    output: str,
+) -> str:
+    """Run an xtb Hessian and return the text of one file it writes (``output``)."""
     cleanup = False
     if work_dir is None:
         work_dir = Path(tempfile.mkdtemp(prefix="xtb_hess_"))
@@ -225,10 +270,10 @@ def frequencies(
                 f"xtb Hessian failed (exit {result.returncode}):\n{result.stderr[-2000:]}"
             )
 
-        g98 = work_dir / "g98.out"
-        if not g98.exists():
-            raise FileNotFoundError(f"xtb did not produce g98.out in {work_dir}")
-        return _parse_g98_frequencies(g98.read_text())
+        written = work_dir / output
+        if not written.exists():
+            raise FileNotFoundError(f"xtb did not produce {output} in {work_dir}")
+        return written.read_text()
 
     finally:
         if cleanup:
@@ -252,6 +297,62 @@ def _parse_g98_frequencies(text: str) -> list[float]:
     if not freqs:
         raise RuntimeError("Could not parse any frequencies from xtb g98.out")
     return freqs
+
+
+def _parse_hessian(text: str, n_atoms: int) -> np.ndarray:
+    """The Cartesian Hessian of xtb's ``hessian`` file (Hartree/bohr**2), shape (3N, 3N)."""
+    values: list[float] = []
+    lines = iter(text.splitlines())
+    for line in lines:
+        if line.strip().startswith("$hessian"):
+            break
+    for line in lines:
+        if line.strip().startswith("$"):
+            break
+        values.extend(float(tok) for tok in line.split())
+    size = 3 * n_atoms
+    if len(values) != size * size:
+        raise RuntimeError(
+            f"xtb hessian file holds {len(values)} values, not {size * size} for {n_atoms} atoms"
+        )
+    hessian = np.array(values).reshape(size, size)
+    symmetric: np.ndarray = (hessian + hessian.T) / 2
+    return symmetric
+
+
+# sqrt(Hartree / (bohr**2 amu)) as a wavenumber: sqrt(Eh / (a0**2 u)) / (2 pi c).
+_WAVENUMBER = 5140.487
+
+
+def _cartesian_modes(geom: Geometry, hessian: np.ndarray) -> tuple[list[float], np.ndarray]:
+    """Frequencies and Cartesian normal modes of a Cartesian Hessian.
+
+    The Hessian is mass-weighted, the three translations and three rotations
+    (two for a linear molecule) are projected out, and what is left is
+    diagonalized; each eigenvector, divided atom by atom by the square root of
+    the mass, is the displacement pattern of its mode.  So a mode moves light
+    atoms further than heavy ones, and carries no momentum or angular momentum.
+    """
+    from rdkit.Chem import GetPeriodicTable
+
+    table = GetPeriodicTable()
+    n = geom.n_atoms
+    mass = np.array([table.GetAtomicWeight(s) for s in geom.symbols])
+    root = np.repeat(np.sqrt(mass), 3)
+    x = np.asarray(geom.coords, dtype=np.float64)
+    r = x - (mass[:, None] * x).sum(axis=0) / mass.sum()
+    axes = np.eye(3)
+    rigid = np.array(
+        [np.tile(axes[k], (n, 1)).ravel() for k in range(3)]
+        + [np.cross(axes[k], r).ravel() for k in range(3)]
+    )
+    _, s, vt = np.linalg.svd(rigid * root, full_matrices=True)
+    vib = vt[int((s > 1e-6 * s[0]).sum()) :]  # orthonormal, mass-weighted, no rigid motion
+    eigval, eigvec = np.linalg.eigh(vib @ (hessian / np.outer(root, root)) @ vib.T)
+    modes = (vib.T @ eigvec).T / root
+    modes /= np.linalg.norm(modes, axis=1, keepdims=True)
+    freqs = np.sign(eigval) * np.sqrt(np.abs(eigval)) * _WAVENUMBER
+    return [float(f) for f in freqs], modes.reshape(-1, n, 3)
 
 
 def _parse_energy(stdout: str) -> float:

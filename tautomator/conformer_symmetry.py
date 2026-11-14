@@ -84,6 +84,28 @@ def _kabsch_rmsd(a: NDArray[np.float64], b: NDArray[np.float64]) -> NDArray[np.f
     return rmsd
 
 
+def _rotations(a: NDArray[np.float64], b: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Proper rotations ``R[k]`` that bring ``b[k] @ R[k].T`` closest to ``a[k]``.
+
+    For matched stacks of centred structures, shape (k, n, 3); proper for the
+    reason `_kabsch_rmsd` gives.
+    """
+    u, _, vt = np.linalg.svd(np.einsum("kni,knj->kij", a, b))
+    d = np.ones((len(a), 3))
+    d[:, 2] = np.sign(np.linalg.det(u @ vt))
+    rot: NDArray[np.float64] = u @ (d[:, :, None] * vt)
+    return rot
+
+
+def superpose(mobile: NDArray[np.float64], target: NDArray[np.float64]) -> NDArray[np.float64]:
+    """``mobile`` turned by the proper rotation that lays it closest onto ``target``.
+
+    Both centred, atoms matched row by row.
+    """
+    moved: NDArray[np.float64] = mobile @ _rotations(target[None], mobile[None])[0].T
+    return moved
+
+
 # ---------------------------------------------------------------------------
 # The candidate search
 # ---------------------------------------------------------------------------
@@ -209,6 +231,66 @@ def best_rmsd(
     return float(
         _kabsch_rmsd(np.repeat(xa[None], len(maps), axis=0), np.stack([xb[m] for m in maps])).min()
     )
+
+
+def best_max_distance(
+    coords_a: NDArray[np.float64],
+    coords_b: NDArray[np.float64],
+    symbols: list[str],
+    tol: float = DIST_TOL,
+    mirror: bool = False,
+) -> float:
+    """`best_rmsd`, scored by the atom that sits farthest from its partner instead.
+
+    Over the same relabellings, each superposed by the proper rotation that
+    minimizes its RMSD; the smallest largest-single-atom distance wins.
+    """
+    b = coords_b * np.array([1.0, 1.0, -1.0]) if mirror else coords_b
+    maps = _candidate_mappings(coords_a, b, symbols, tol)
+    if not maps:
+        return np.inf
+    xa = _center(coords_a)
+    xb = _center(b)
+    stack = np.stack([xb[m] for m in maps])
+    rot = _rotations(np.repeat(xa[None], len(maps), axis=0), stack)
+    moved = np.einsum("knj,kij->kni", stack, rot)
+    return float(np.linalg.norm(moved - xa[None], axis=-1).max(axis=-1).min())
+
+
+def symmetry_operations(
+    coords: NDArray[np.float64],
+    symbols: list[str] | tuple[str, ...],
+    rthr: float = DEFAULT_RTHR,
+    tol: float = DIST_TOL,
+) -> list[tuple[NDArray[np.int64], NDArray[np.float64]]]:
+    """Every operation but the identity that maps the conformer onto itself.
+
+    Each is ``(perm, R)`` with ``R @ x[perm[i]] ~ x[i]`` for every atom ``i`` of
+    the centred coordinates, within ``rthr`` RMSD; ``R`` is a rotation, or a
+    rotation times a reflection for an improper operation.  These are the
+    relabellings `symmetry_number` counts, plus those onto the mirror image,
+    kept rather than counted.
+    """
+    x = _center(np.asarray(coords, dtype=np.float64))
+    n = len(symbols)
+    ops: list[tuple[NDArray[np.int64], NDArray[np.float64]]] = []
+    for reflect in (np.eye(3), np.diag([1.0, 1.0, -1.0])):
+        y = x @ reflect
+        maps = _candidate_mappings(x, y, list(symbols), tol)
+        if not maps:
+            continue
+        stack = np.stack([y[m] for m in maps])
+        rot = _rotations(np.repeat(x[None], len(maps), axis=0), stack)
+        resid = x[None] - np.einsum("knj,kij->kni", stack, rot)
+        rmsd = np.sqrt((resid**2).sum(-1).mean(-1))
+        for m, r, dev in zip(maps, rot, rmsd, strict=True):
+            full = r @ reflect
+            if dev > rthr:
+                continue
+            if np.array_equal(m, np.arange(n)) and np.allclose(full, np.eye(3), atol=1e-3):
+                continue
+            ops.append((np.asarray(m), full))
+    return ops
 
 
 # ---------------------------------------------------------------------------

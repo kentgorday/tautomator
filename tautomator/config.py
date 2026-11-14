@@ -406,6 +406,10 @@ class RefinementConfig:
     rrho: Rrho = "xtb"
     ewin: float = 8.0  # energy window (kcal/mol) for filtering after refinement
     pcm_hydrogen_radius: float = 1.1  # PCM cavity radius (Angstrom) for hydrogen
+    # Move each symmetric conformer a little along its softest symmetry-breaking
+    # GFN2 mode before optimizing it, so a symmetric saddle cannot trap the
+    # optimizer (tautomator.nudge).
+    nudge: bool = True
     # Derived: "orbmol", or the [compute] driver for DFT refinement.
     engine: str = "pyscf"
 
@@ -464,6 +468,7 @@ class PkaConfig:
                 "rrho": ref.rrho,
                 "ewin": ref.ewin,
                 "solvation_prefilter_ewin": ref.solvation_prefilter_ewin,
+                "nudge": ref.nudge,
             },
             "scoring": {
                 "driver": self.compute.driver,
@@ -667,6 +672,7 @@ def _build_refinement(
         rrho=raw.get("rrho", "xtb"),
         ewin=raw.get("ewin", 8.0 if solvation != "none" else 10.0),
         pcm_hydrogen_radius=raw.get("pcm_hydrogen_radius", 1.1),
+        nudge=raw.get("nudge", True),
         engine=engine,
     )
 
@@ -693,6 +699,8 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
         raise ValueError(
             f"Unknown [refinement] rrho: {ref.rrho!r} (must be 'xtb' or 'refinement')"
         )
+    if not isinstance(ref.nudge, bool):
+        raise ValueError(f"[refinement] nudge must be true or false, not {ref.nudge!r}")
 
     # Level of theory: the 3c composites carry their basis with them.
     _check_composite("[refinement] method", ref.method, ref.basis, compute.driver)

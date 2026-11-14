@@ -5,7 +5,8 @@ the OrbMol-v2 machine-learned potential -- adds a solvation energy unless the
 stage is gas-phase, and recomputes the quasi-RRHO vibrational free energy.
 
 Per charge state, in order: optimize every conformer, re-file the ones whose
-proton moved, collapse duplicates, take a Hessian for each survivor, optionally
+proton moved, fold shallow off-symmetric wells into the symmetric conformer
+beside them, collapse duplicates, take a Hessian for each survivor, optionally
 skip the solvation single point for conformers already far above the minimum in
 gas phase, compute the solvation energies, then apply the energy window.
 """
@@ -14,18 +15,23 @@ from __future__ import annotations
 
 import logging
 from types import ModuleType
+from typing import cast
+
+import numpy as np
 
 from tautomator import xtb_runner
 from tautomator.config import DEFAULT_MEMORY_GB, DROP_CAVITIES, RefinementConfig
+from tautomator.conformer_symmetry import conformer_multiplicity
 from tautomator.ensemble import (
     HARTREE_TO_KCAL,
     _effective_energy,
     deduplicate_charge_state,
     filter_charge_state_by_energy,
 )
+from tautomator.nudge import fold, nudge, settle
 from tautomator.protomer_geometry import repair_migrated_conformers
 from tautomator.thermo import quasi_rrho_free_energy
-from tautomator.types import ChargeState, Ensemble, ExcludedConformer, ExclusionReason
+from tautomator.types import ChargeState, Ensemble, ExcludedConformer, ExclusionReason, Geometry
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +104,16 @@ def refine(
         if (summary := report.summary()) is not None:
             log.info(f"  q={cs.charge}: {summary}")
 
+        # Fold before deduplicating.  A shallow off-symmetric well can lie near
+        # enough to its symmetric shape to deduplicate with it and still count
+        # as chiral, and deduplication would keep whichever of the two the
+        # stale RRHO below favours.
+        if config.nudge and (folded := _fold_shallow_wells(cs)):
+            log.info(
+                f"  q={cs.charge}: {folded} shallow off-symmetric well(s) folded into the "
+                "symmetric conformer beside them"
+            )
+
         # Deduplicate before the Hessians, not after. Optimization routinely
         # relaxes distinct sampled conformers onto the same minimum, and onto
         # mirror-image pairs; each of those would otherwise cost a second
@@ -124,6 +140,43 @@ def refine(
     return ensemble
 
 
+def _fold_shallow_wells(cs: ChargeState) -> int:
+    """Drop each conformer that `nudge.fold` joins to a symmetric one; return how many.
+
+    Runs before deduplication, so the multiplicities are taken from the
+    optimized geometries here; the ones on the conformers are still sampling's.
+    They only rank the conformers, so the duplicates still in the list do no
+    harm.  Compares the energies the optimizations minimized: electronic plus
+    solvation where the geometry was optimized in solvent, electronic alone
+    otherwise.
+    """
+    folded = 0
+    for ms in cs.microstates:
+        # Every optimized conformer has an energy; one without is left to the
+        # code after this to report, and its microstate goes unfolded.
+        if len(ms.conformers) < 2 or any(c.electronic_energy is None for c in ms.conformers):
+            continue
+        coords = [np.asarray(c.geometry.coords, dtype=np.float64) for c in ms.conformers]
+        symbols = list(ms.conformers[0].geometry.symbols)
+        keep = fold(
+            coords,
+            [
+                (cast(float, c.electronic_energy) + (c.solvation_energy or 0.0)) * HARTREE_TO_KCAL
+                for c in ms.conformers
+            ],
+            [
+                float(m)
+                for m in conformer_multiplicity(
+                    np.array(coords), symbols, includes_enantiomer=ms.includes_enantiomer
+                )
+            ],
+            symbols,
+        )
+        folded += len(ms.conformers) - len(keep)
+        ms.conformers = [ms.conformers[k] for k in keep]
+    return folded
+
+
 def _optimize_charge_state(
     cs: ChargeState,
     config: RefinementConfig,
@@ -135,6 +188,24 @@ def _optimize_charge_state(
 ) -> None:
     """Optimize every conformer, setting electronic (and solvation, if minimized in solvent)."""
     in_solvent = config.solvation == "optimize"
+    # The solvent sampling ran in, where the conformers are GFN2 minima.
+    sampling_solvent = solvent if cavity is not None else None
+
+    def at_level(g: Geometry) -> tuple[Geometry, float, bool]:
+        """Optimize at the refinement level: (geometry, energy in Hartree, converged)."""
+        relaxed, energy, ok = engine.optimize(
+            g,
+            cs.charge,
+            config.method,
+            config.basis,
+            cavity if in_solvent else None,
+            solvent if in_solvent else None,
+            pcm_hydrogen_radius=config.pcm_hydrogen_radius,
+            threads=threads,
+            memory_gb=memory_gb,
+        )
+        return relaxed, float(energy), bool(ok)
+
     for ms in cs.microstates:
         surviving = []
         for conf in ms.conformers:
@@ -144,17 +215,41 @@ def _optimize_charge_state(
             # different thing to chase, and worth separating in the record.
             fail_reason: ExclusionReason = "optimization_failed"
             try:
-                opt_geom, opt_energy, converged = engine.optimize(
-                    conf.geometry,
-                    cs.charge,
-                    config.method,
-                    config.basis,
-                    cavity if in_solvent else None,
-                    solvent if in_solvent else None,
-                    pcm_hydrogen_radius=config.pcm_hydrogen_radius,
-                    threads=threads,
-                    memory_gb=memory_gb,
-                )
+                start, done = conf.geometry, None
+                if config.nudge:
+                    start, done = nudge(
+                        conf.geometry, cs.charge, solvent=sampling_solvent, threads=threads
+                    )
+                    if done is not None:
+                        log.info(
+                            f"  Nudged a symmetric conformer in microstate {ms.tautomer_id[:8]} "
+                            f"along its {done.frequency:.0f} cm-1 GFN2 mode"
+                        )
+                try:
+                    opt_geom, opt_energy, converged = at_level(start)
+                except Exception as e:
+                    if done is None:
+                        raise
+                    # A nudge is an improvement, never a reason to lose the conformer.
+                    log.warning(
+                        f"  The nudged optimization failed for a conformer in microstate "
+                        f"{ms.tautomer_id[:8]} ({type(e).__name__}: {e}); optimizing it as sampled"
+                    )
+                    done = None
+                    opt_geom, opt_energy, converged = at_level(conf.geometry)
+                if done is not None:
+                    settled = settle(done, opt_geom, opt_energy, at_level)
+                    if settled is not None:
+                        kept = "kept the symmetric shape" if settled.replaces else "kept the nudge"
+                        side = "higher" if settled.depth >= 0 else "lower"
+                        log.info(
+                            f"  The nudged conformer in microstate {ms.tautomer_id[:8]} lost its "
+                            f"symmetry; the symmetric shape is {abs(settled.depth):.3f} kcal/mol "
+                            f"{side}, {kept}"
+                        )
+                        if settled.replaces:
+                            opt_geom, opt_energy = settled.geometry, settled.energy
+                            converged = True  # settle keeps only a converged shape
                 conf.geometry = opt_geom
                 conf.refinement_converged = converged
                 if not converged:
