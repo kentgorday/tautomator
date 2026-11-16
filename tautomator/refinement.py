@@ -221,9 +221,14 @@ def _optimize_charge_state(
                         conf.geometry, cs.charge, solvent=sampling_solvent, threads=threads
                     )
                     if done is not None:
+                        more = ""
+                        if done.later:
+                            listed = ", ".join(f"{f:.0f}" for f in done.later)
+                            plural = "s" if len(done.later) > 1 else ""
+                            more = f" and its {listed} cm-1 mode{plural}"
                         log.info(
                             f"  Nudged a symmetric conformer in microstate {ms.tautomer_id[:8]} "
-                            f"along its {done.frequency:.0f} cm-1 GFN2 mode"
+                            f"along its {done.frequency:.0f} cm-1 GFN2 mode{more}"
                         )
                 try:
                     opt_geom, opt_energy, converged = at_level(start)

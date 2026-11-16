@@ -406,8 +406,8 @@ class RefinementConfig:
     rrho: Rrho = "xtb"
     ewin: float = 8.0  # energy window (kcal/mol) for filtering after refinement
     pcm_hydrogen_radius: float = 1.1  # PCM cavity radius (Angstrom) for hydrogen
-    # Move each symmetric conformer a little along its softest symmetry-breaking
-    # GFN2 mode before optimizing it, so a symmetric saddle cannot trap the
+    # Move each symmetric conformer a little along its soft symmetry-breaking
+    # GFN2 modes before optimizing it, so a symmetric saddle cannot trap the
     # optimizer (tautomator.nudge).
     nudge: bool = True
     # Derived: "orbmol", or the [compute] driver for DFT refinement.

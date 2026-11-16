@@ -375,7 +375,7 @@ class TestNudgeBeforeOptimizing:
         )
 
     @staticmethod
-    def fake_nudge(seen: list[str | None]) -> Any:
+    def fake_nudge(seen: list[str | None], later: tuple[float, ...] = ()) -> Any:
         def fake(g: Geometry, charge: int, *, solvent: str | None, **kw: Any) -> Any:
             seen.append(solvent)
             # Off the molecular plane: FakeDriver keys its energies on y.
@@ -385,9 +385,22 @@ class TestNudgeBeforeOptimizing:
                 symmetric_part=0.0,
                 operations=(((0, 2, 1), False),),
                 symmetry=symmetry_number(g.coords, list(g.symbols)),
+                later=later,
             )
 
         return fake
+
+    def test_logs_the_later_modes_pushed(
+        self,
+        patch_drivers: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        patch_drivers(FakeDriver(opt=[-76.40]))
+        monkeypatch.setattr(refinement, "nudge", self.fake_nudge([], later=(61.4, 128.0)))
+        with caplog.at_level(logging.INFO, logger="tautomator.refinement"):
+            refinement.refine(ensemble_of([-76.40]), self.cfg(), driver="pyscf")
+        assert "along its 24 cm-1 GFN2 mode and its 61, 128 cm-1 modes" in caplog.text
 
     def test_optimizes_from_the_nudged_geometry(
         self,

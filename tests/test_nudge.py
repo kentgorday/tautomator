@@ -19,12 +19,14 @@ from tautomator.ensemble import HARTREE_TO_KCAL
 from tautomator.nudge import (
     AMPLITUDE,
     BREAKS,
+    SECOND_CUTOFF,
     SETTLE,
     SETTLE_REACH,
     SOFT_CUTOFF,
     Nudge,
     Operation,
     fold,
+    localize,
     nudge,
     settle,
     symmetric_part,
@@ -201,6 +203,100 @@ class TestNudge:
         assert done is not None and done.symmetry == (2, True)
         assert len(done.operations) == 3
         assert ((0, 2, 1), False) in done.operations  # the C2 swaps the hydrogens
+        assert done.later == ()
+
+
+def unit(v: np.ndarray) -> np.ndarray:
+    return np.asarray(v / np.linalg.norm(v, axis=1).max())
+
+
+# A second symmetry-breaking displacement of WATER, not along ANTISYMMETRIC.
+SECOND = degenerate_mode(WATER, seed=1)
+
+
+class TestSecondPush:
+    def test_a_later_breaking_mode_is_pushed_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert symmetric_part(SECOND, symmetry_operations(WATER.coords, WATER.symbols)) < 1e-9
+        stub_modes(monkeypatch, [80.0, 120.0], [ANTISYMMETRIC, SECOND])
+        moved, done = nudge(WATER, 0, solvent=None)
+        assert done is not None and done.frequency == 80.0 and done.later == (120.0,)
+        # The softest mode keeps its whole push; the later one adds its own.
+        expected = AMPLITUDE * (unit(ANTISYMMETRIC) + unit(SECOND))
+        assert np.allclose(moved.coords - WATER.coords, expected)
+
+    def test_a_later_mode_above_the_second_cutoff_is_not(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stub_modes(monkeypatch, [80.0, SECOND_CUTOFF + 10.0], [ANTISYMMETRIC, SECOND])
+        moved, done = nudge(WATER, 0, solvent=None)
+        assert done is not None and done.later == ()
+        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(ANTISYMMETRIC))
+
+    def test_a_later_symmetric_mode_is_not(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stub_modes(monkeypatch, [80.0, 100.0], [ANTISYMMETRIC, SYMMETRIC])
+        moved, done = nudge(WATER, 0, solvent=None)
+        assert done is not None and done.later == ()
+        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(ANTISYMMETRIC))
+
+    def test_a_first_mode_above_the_second_cutoff_brings_no_later_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = SECOND_CUTOFF + 20.0
+        stub_modes(monkeypatch, [first, first + 10.0], [ANTISYMMETRIC, SECOND])
+        _, done = nudge(WATER, 0, solvent=None)
+        assert done is not None and done.frequency == first and done.later == ()
+
+    def test_the_other_sign_reverses_the_whole_move(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stub_modes(monkeypatch, [80.0, 120.0], [ANTISYMMETRIC, SECOND])
+        plus, _ = nudge(WATER, 0, solvent=None)
+        minus, _ = nudge(WATER, 0, solvent=None, sign=-1.0)
+        assert np.allclose(plus.coords - WATER.coords, WATER.coords - minus.coords)
+
+
+def two_groups(n: int = 8, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Unit displacements of atoms 0-2 and of atoms 5-7 alone, of n hydrogens."""
+    rng = np.random.default_rng(seed)
+    a, b = np.zeros((n, 3)), np.zeros((n, 3))
+    a[:3], b[5:] = rng.normal(size=(3, 3)), rng.normal(size=(3, 3))
+    return a / np.linalg.norm(a), b / np.linalg.norm(b)
+
+
+class TestLocalize:
+    @pytest.mark.parametrize("angle", [np.pi / 4, 0.3, 1.2, 0.0])
+    def test_pulls_two_groups_apart(self, angle: float) -> None:
+        # An in-phase and an out-of-phase pair at pi/4, any other mix too.
+        a, b = two_groups()
+        mixed = [np.cos(angle) * a + np.sin(angle) * b, -np.sin(angle) * a + np.cos(angle) * b]
+        found = localize(mixed, ["H"] * 8)
+        overlaps = sorted([round(abs(float((u * x).sum())), 6) for x in (a, b)] for u in found)
+        assert overlaps == [[0.0, 1.0], [1.0, 0.0]]
+
+    def test_pulls_three_groups_apart(self) -> None:
+        rng = np.random.default_rng(2)
+        tops = []
+        for k in range(3):
+            t = np.zeros((9, 3))
+            t[3 * k : 3 * k + 3] = rng.normal(size=(3, 3))
+            tops.append(t / np.linalg.norm(t))
+        mix = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+        mixed = [sum(mix[i, k] * tops[k] for k in range(3)) for i in range(3)]
+        found = localize(mixed, ["H"] * 9)
+        overlaps = np.array([[abs(float((u * t).sum())) for t in tops] for u in found])
+        assert np.allclose(np.sort(overlaps, axis=1)[:, -1], 1.0, atol=1e-6)
+        assert np.allclose(np.sort(overlaps.argmax(axis=1)), [0, 1, 2])
+
+    def test_spans_the_same_displacements(self) -> None:
+        a, b = two_groups(seed=3)
+        mixed = [a + b, a - 0.5 * b]
+        found = localize(mixed, ["C", "H", "H", "O", "N", "H", "H", "H"])
+        basis = np.linalg.qr(np.array([m.ravel() for m in mixed]).T)[0]
+        for u in found:
+            assert np.linalg.norm(u) == pytest.approx(1.0)
+            assert np.linalg.norm(basis @ (basis.T @ u.ravel())) == pytest.approx(1.0)
+
+    def test_one_mode_is_only_scaled(self) -> None:
+        (found,) = localize([2.0 * ANTISYMMETRIC], list(WATER.symbols))
+        assert np.allclose(found, ANTISYMMETRIC / np.linalg.norm(ANTISYMMETRIC))
 
 
 # WATER with one O-H stretched: the C2 is gone, the molecular plane is not.
@@ -467,10 +563,14 @@ class TestRealModes:
         k = 2  # the CBr3 umbrella, nondegenerate
         assert abs((modes[k] * (turned_modes[k] @ q)).sum()) == pytest.approx(1.0, abs=1e-3)
 
-    def test_nudges_along_a_degenerate_turn(self) -> None:
+    def test_nudges_along_a_degenerate_turn_and_its_partner(self) -> None:
+        # The partner breaks the symmetry too and lies under SECOND_CUTOFF, so the
+        # start moves along both members of the pair.
         moved, done = nudge(CH3CBR3, 0, solvent=None)
         assert done is not None and done.symmetry == (3, True)
         assert done.frequency < 150 and done.symmetric_part < 1e-6
-        assert np.linalg.norm(moved.coords - CH3CBR3.coords, axis=1).max() == pytest.approx(
-            AMPLITUDE
-        )
+        assert len(done.later) == 1 and done.later[0] == pytest.approx(done.frequency, abs=1.0)
+        _, modes = xtb_runner.normal_modes(CH3CBR3)
+        (partner,) = localize([modes[1]], list(CH3CBR3.symbols))
+        expected = AMPLITUDE * (unit(modes[0]) + unit(partner))
+        assert np.allclose(moved.coords - CH3CBR3.coords, expected, atol=1e-6)

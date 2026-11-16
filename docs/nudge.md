@@ -20,8 +20,10 @@ It is on by default (`[refinement] nudge = true`).
    operation (found with the tolerance the symmetry number uses) gets a GFN2
    Hessian in sampling's solvent. It is moved `AMPLITUDE` (the largest
    single-atom move) along its softest normal mode that is less than `BREAKS`
-   totally symmetric, if that mode is softer than `SOFT_CUTOFF`. Linear
-   molecules are skipped.
+   totally symmetric, if that mode is softer than `SOFT_CUTOFF`. The same start
+   also moves `AMPLITUDE` along each later breaking mode softer than
+   `SECOND_CUTOFF`, those modes first rotated among themselves so that each
+   moves one group (`localize`). Linear molecules are skipped.
 2. **Settle** (after it). If the nudged result has a different symmetry than
    the conformer was sampled with, and no atom sits more than `SETTLE_REACH`
    from its image, the result is averaged over its images under the sampled
@@ -49,6 +51,7 @@ sampled geometry; a failed GFN2 Hessian skips the nudge.
 | --- | --- | --- |
 | `AMPLITUDE` | 0.3 Å | as cheap as 0.2 Å, never worse, and one deeper well found |
 | `SOFT_CUTOFF` | 300 cm⁻¹ | catches H2O2's trans saddle (251 cm⁻¹) |
+| `SECOND_CUTOFF` | 150 cm⁻¹ | catches N-methylacetamide's second methyl (128–146 cm⁻¹) |
 | `BREAKS` | 0.5 | an exact symmetry-breaking mode has a symmetric part of 0, a symmetric one 1 |
 | `SETTLE` | 0.075 kcal/mol | where the quartic double-well count n*(ΔE/kT) is √2 |
 | `SETTLE_REACH` | 1.25 Å | no well under `SETTLE` sat farther than 1.09 Å from its image |
@@ -71,6 +74,18 @@ first version tested instead whether some operation reversed the mode,
 ⟨v|gv⟩/⟨v|v⟩ < −0.5. That misses a degenerate mode of a threefold axis, which
 the turn rotates by 120° (⟨v|gv⟩/⟨v|v⟩ = cos 120° = −0.5 exactly), so a
 threefold propeller such as triethylamine was never nudged.
+
+**SECOND_CUTOFF.** A push along the softest breaking mode turns one soft
+group. Once the symmetry is broken, a second group on a hilltop of its own feels
+only its coupling to the first, and the optimizer can converge with it still
+there. N-methylacetamide's N-methyl, a wB97X-3c saddle, sits at 128–146 cm⁻¹ in
+GFN2 in its four sampled conformers, so 150 cm⁻¹ takes it. Of the 278 nudged
+MNSol conformers, 77 have a later breaking mode under 150 cm⁻¹ (44 under 100,
+215 under 300). The later modes are rotated (Pipek–Mezey, each atom's share of
+a vector being its part of the mass-weighted norm) because two equivalent groups
+share their modes as an in-phase and an out-of-phase pair: the sum of the pair
+moves one group twice and the other not at all. The softest mode stays out of
+the rotation, so its push is the one it had before (Measurements, second push).
 
 **SETTLE.** On a double well whose two minima lie ΔE below the barrier between
 them, the classical count of states runs from 1 (ΔE = 0, a single flat-bottomed
@@ -196,6 +211,40 @@ symmetric shape. The 37 nudged PySCF runs took 1.28× the unnudged steps.
 
 What these runs left unfixed is under Limits.
 
+**Second push (2026-11-15).** The two-site cases above led to four ways of
+pushing more than one mode, each run per conformer on the 152-row set and as
+full refinements of edge-case species, against the single push:
+
+| Variant | N-methylacetamide | 2,6-lutidine | What went wrong | Steps against one push |
+| --- | --- | --- | --- | --- |
+| Every later breaking mode added, 0.3 Å each | freed (cutoff 150 or 300) | freed (cutoff 100) | at cutoff 300, a spurious chiral N-methylacetamide conformer: F 0.69 too low | 1.04–1.30 on those two |
+| Every picked mode rotated together, cutoff 300 | freed | freed | the softest mode's share of the push shrank: 2 of 79 conformers went back onto the saddle one push leaves, 0.34 and 1.94 kcal/mol up | 1.07 |
+| **One push as before, plus later modes under 150 rotated (built)** | **freed** | **freed** | **nothing found** | **1.02** |
+| A second optimization from the first result when it comes back to its symmetry | freed | freed | nothing found in 42 retried conformers | 1.81 on the 58% it retries |
+
+The retry was tested with the rule that keeps any result at least `SETTLE`
+lower. A first rule that kept only results off the sampled symmetry missed
+N-methylacetamide, whose minimum keeps it (its N-methyl turned 60°).
+
+With the variant built, only one of 73 conformers moved by more than 0.01
+kcal/mol per conformer: a 2,6-lutidine conformer reached the C2v minimum, 0.32
+kcal/mol lower. In full refinements of ten species:
+
+- *2,6-lutidine* (gas): the spurious conformer 0.32 kcal/mol up, a wB97X-3c
+  saddle, is gone; F +0.46.
+- *N-methylacetamide* (gas): the lowest conformer is 0.10 kcal/mol lower and a
+  minimum (lowest frequency 43 cm⁻¹; it was a saddle, −26 cm⁻¹).
+- *2-butanone* (gas): its mirror pair folds into the symmetric shape between
+  them, 0.005 kcal/mol up and a saddle (−37 cm⁻¹); count 2 → 1, F +0.32. With
+  one push no start reached that shape, so fold had nothing to fold the pair
+  into.
+- *p-Toluate* (water): same count, lowest conformer 0.016 kcal/mol higher (a
+  nearly free methyl).
+- CCl3COEt, N-ethylpivalamide, tBuCOEt, N-methylpivalamide, perfluorobutane and
+  the acetylacetone enol (gas): unchanged.
+
+The ten refinements took 989 optimization steps against 968 with one push.
+
 **Earlier measurements (old vectors).** The frequencies were right (only the
 vectors were wrong), so the cutoff results stand. The rest are kept for what
 they decided; the amplitude results above replace their numbers.
@@ -242,7 +291,10 @@ nudged, in 163 of the runs. That puts the extra at 12–23% of refinement's
 optimization steps on MNSol. The upper end assumes the other conformers converge
 as fast as these did unnudged (9.1 steps). The lower end assumes they take the
 21.8 steps that conformers with no symmetry took in an earlier test. The runs
-keep no step counts to check either. Most nudges change nothing: 15 of the 46 MNSol rows
+keep no step counts to check either. The second push adds about 2.6 steps to
+the 9% of MNSol's sampled conformers that have a later breaking mode under
+`SECOND_CUTOFF` (1.16× the one-push steps on the 16 MNSol conformers tested,
+0.99× on 57 others), 1–2% more refinement steps. Most nudges change nothing: 15 of the 46 MNSol rows
 ended more than 0.01 kcal/mol lower (up to 2.6), and none higher.
 
 ## Limits
@@ -260,14 +312,13 @@ ended more than 0.01 kcal/mol lower (up to 2.6), and none higher.
   minimum that warping makes is an image of the others. A molecule whose
   valley has two kinds of minimum around a threefold axis (a sixfold warping
   term stronger than the threefold one) would find only one of them.
-- **One mode is one site.** Only the softest symmetry-breaking mode is tried.
-  When that mode turns one soft group, a second group on a hilltop stays there.
-  In N-methylacetamide the hilltop is then counted in place of its minimum, 0.10
-  kcal/mol too high. In 2,6-lutidine it is counted beside it, as a second
-  conformer 0.32 kcal/mol up that lowers the ensemble's free energy by 0.46
-  kcal/mol. A push along the second-softest breaking mode frees both. Trying it
-  whenever the first push comes back would cost one more optimization for most
-  nudged conformers, and has not been measured.
+- **A second soft site that GFN2 calls stiff is not pushed.** Later breaking
+  modes are pushed only below `SECOND_CUTOFF`. A second group on a hilltop
+  whose GFN2 mode lies above it stays there, as it did for every site before
+  the second push (N-methylacetamide's methyl, 0.10 kcal/mol too high, and
+  2,6-lutidine's, F 0.46 too low). The band from 150 to 300 cm⁻¹ was tried only
+  with every mode rotated together, where the one gain was 2-butyne, 0.014
+  kcal/mol lower with the same count.
 - **No symmetry, no nudge.** A conformer sampled without a symmetry operation
   is optimized as sampled, and can still end on a saddle. It can stop where the
   slope is gentle (3 of the 47 conformers in the MNSol recount), or optimize

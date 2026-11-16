@@ -22,6 +22,19 @@ deduplication and the mirror-image bookkeeping already count as one
 rather than reversing it; there + and - differ only by how the valley around
 the axis is warped, and the minima the warping makes are images of one another.
 
+That push turns one soft group.  Once it has broken the symmetry, a second soft
+group on a hilltop of its own feels only the coupling to the first, and the
+optimizer can converge with it still there: N-methylacetamide's other methyl,
+one of 2,6-lutidine's two.  So the same start also moves AMPLITUDE along each
+later breaking mode below SECOND_CUTOFF.  Those modes are first rotated among
+themselves (`localize`) so that each moves one group: two equivalent groups
+share their modes as an in-phase and an out-of-phase pair, and the sum of the
+pair would move one group twice and the other not at all.  The softest mode's
+own push is left as it is; folding it into the rotation shrank its share and
+sent some conformers back onto the saddle it was there to leave.
+A mirror or a twofold axis reverses the whole move, later modes included, so
+the argument for one direction holds for it.
+
 A nudge can also do harm.  On a nearly flat valley -- a CBr3 or CF3 that turns
 almost freely, an NH2 that barely prefers to be flat -- the optimizer stops short
 of the symmetric shape it would have kept, a few hundredths of a kcal/mol below
@@ -48,15 +61,15 @@ only for conformers with a symmetry operation.  Symmetry is judged with the
 tolerance the conformer symmetry number uses, so a conformer is nudged exactly
 when the counting treats it as symmetric.  Conformers with no symmetry are left
 alone: no symmetry holds their optimizer on a saddle, and a push only picks a
-basin by GFN2's lights.  Only one mode is tried, so a second soft group can stay
-on its hilltop.  How the constants were chosen, what the nudge costs and where
+basin by GFN2's lights.  A second soft group that GFN2 puts above SECOND_CUTOFF
+is not pushed.  How the constants were chosen, what the nudge costs and where
 it stops is in docs/nudge.md.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -77,6 +90,7 @@ log = logging.getLogger(__name__)
 
 AMPLITUDE = 0.3  # Angstrom: the largest single-atom move (docs/nudge.md)
 SOFT_CUTOFF = 300.0  # cm**-1: only modes softer than this are used
+SECOND_CUTOFF = 150.0  # cm**-1: later breaking modes softer than this are pushed along too
 BREAKS = 0.5  # a mode breaks the symmetry when less than this fraction of it is totally symmetric
 SETTLE = 0.075  # kcal/mol: a symmetric shape this close above the nudged result replaces it
 SETTLE_REACH = 1.25  # Angstrom: no settling once an atom sits this far from an image
@@ -93,6 +107,7 @@ class Nudge:
     symmetric_part: float  # the fraction of that mode the symmetry keeps; 0 is exact
     operations: tuple[Operation, ...]  # the conformer's symmetry operations, identity excluded
     symmetry: tuple[int, bool]  # (sigma, achiral) of the conformer as sampled
+    later: tuple[float, ...] = ()  # cm**-1: the later breaking modes pushed along with it
 
 
 def symmetric_part(
@@ -122,6 +137,55 @@ def _collinear(coords: NDArray[np.float64]) -> bool:
     return bool(2.0 * np.sqrt((s[1] ** 2 + s[2] ** 2) / len(x)) <= DEFAULT_RTHR)
 
 
+def _unit(vec: NDArray[np.float64]) -> NDArray[np.float64]:
+    """``vec`` scaled so its largest single-atom move is 1."""
+    return np.asarray(vec / np.linalg.norm(vec, axis=1).max())
+
+
+def localize(
+    modes: Sequence[NDArray[np.float64]], symbols: Sequence[str], *, sweeps: int = 200
+) -> list[NDArray[np.float64]]:
+    """The same displacements, rotated among themselves so that each moves as few atoms as it can.
+
+    Two equivalent soft groups share their modes as an in-phase and an
+    out-of-phase combination, in a proportion the rounding of a near-degenerate
+    pair decides.  Rotating the set (Pipek-Mezey, an atom's share of a vector
+    being its part of the mass-weighted norm, squared and summed over the set)
+    gives one vector per group.  The vectors are taken mass-weighted
+    orthonormal first, as normal modes are up to rounding; the result spans the
+    same displacements, each of unit norm, in Cartesian coordinates.
+    """
+    from rdkit.Chem import GetPeriodicTable
+
+    vecs = np.array([np.asarray(m, dtype=np.float64) for m in modes])
+    if len(vecs) < 2:
+        return [v / np.linalg.norm(v) for v in vecs]
+    table = GetPeriodicTable()
+    root = np.sqrt([table.GetAtomicWeight(s) for s in symbols])[None, :, None]
+    flat = (vecs * root).reshape(len(vecs), -1)
+    q, _ = np.linalg.qr(flat.T)
+    w = (q.T * np.sign((q.T * flat).sum(axis=1))[:, None]).reshape(vecs.shape)
+    for _ in range(sweeps):
+        largest = 0.0
+        for s in range(len(w)):
+            for t in range(s + 1, len(w)):
+                cross = (w[s] * w[t]).sum(axis=1)
+                diff = (w[s] * w[s]).sum(axis=1) - (w[t] * w[t]).sum(axis=1)
+                a = float((cross * cross - 0.25 * diff * diff).sum())
+                b = float((cross * diff).sum())
+                if abs(a) + abs(b) < 1e-14:
+                    continue
+                gamma = 0.25 * np.arctan2(b, -a)
+                largest = max(largest, abs(gamma))
+                ws, wt = w[s].copy(), w[t].copy()
+                w[s] = np.cos(gamma) * ws + np.sin(gamma) * wt
+                w[t] = -np.sin(gamma) * ws + np.cos(gamma) * wt
+        if largest < 1e-9:
+            break
+    out = w / root
+    return [v / np.linalg.norm(v) for v in out]
+
+
 def nudge(
     geom: Geometry,
     charge: int,
@@ -130,13 +194,17 @@ def nudge(
     threads: int | None = None,
     amplitude: float = AMPLITUDE,
     cutoff: float = SOFT_CUTOFF,
+    second_cutoff: float = SECOND_CUTOFF,
     sign: float = 1.0,
 ) -> tuple[Geometry, Nudge | None]:
     """The geometry to start the refinement optimization from, and what was done.
 
-    Returns ``geom`` itself and None when the conformer is linear, has no
-    symmetry operation or no symmetry-breaking mode below ``cutoff``, or its
-    GFN2 Hessian fails.  ``sign`` picks the direction.
+    The start is ``amplitude`` along the softest symmetry-breaking mode below
+    ``cutoff``, plus ``amplitude`` along each later breaking mode below
+    ``second_cutoff``, those later ones localized among themselves.  Returns
+    ``geom`` itself and None when the conformer is linear, has no symmetry
+    operation or no symmetry-breaking mode below ``cutoff``, or its GFN2
+    Hessian fails.  ``sign`` picks the direction of the whole move.
     """
     if geom.n_atoms < 3 or _collinear(geom.coords):
         return geom, None
@@ -148,23 +216,30 @@ def nudge(
     except Exception as e:
         log.warning(f"    GFN2 Hessian for the nudge failed ({e}); optimizing as sampled")
         return geom, None
+    breaking: list[tuple[float, float, NDArray[np.float64]]] = []  # softest first
     for freq, mode in zip(freqs, modes, strict=True):
-        if freq >= cutoff:
+        if freq >= cutoff or (breaking and freq >= second_cutoff):
             break
         kept = symmetric_part(mode, ops)
         if kept < BREAKS:
-            step = sign * amplitude * mode / np.linalg.norm(mode, axis=1).max()
-            moved = Geometry(symbols=geom.symbols, coords=np.asarray(geom.coords) + step)
-            return moved, Nudge(
-                frequency=float(freq),
-                symmetric_part=kept,
-                operations=tuple(
-                    (tuple(int(i) for i in perm), bool(np.linalg.det(rot) < 0))
-                    for perm, rot in ops
-                ),
-                symmetry=symmetry_number(geom.coords, list(geom.symbols)),
-            )
-    return geom, None
+            breaking.append((float(freq), kept, np.asarray(mode)))
+    if not breaking:
+        return geom, None
+    (freq, kept, first), later = breaking[0], breaking[1:]
+    step = _unit(first)
+    if later:
+        step = step + sum(_unit(v) for v in localize([m for _, _, m in later], geom.symbols))
+    coords = np.asarray(geom.coords) + sign * amplitude * step
+    moved = Geometry(symbols=geom.symbols, coords=coords)
+    return moved, Nudge(
+        frequency=freq,
+        symmetric_part=kept,
+        operations=tuple(
+            (tuple(int(i) for i in perm), bool(np.linalg.det(rot) < 0)) for perm, rot in ops
+        ),
+        symmetry=symmetry_number(geom.coords, list(geom.symbols)),
+        later=tuple(f for f, _, _ in later),
+    )
 
 
 def _image(x: NDArray[np.float64], op: Operation) -> NDArray[np.float64]:
