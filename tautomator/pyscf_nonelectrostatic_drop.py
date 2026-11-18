@@ -735,7 +735,13 @@ _NO_PARAMS = Params(
 
 
 def _charge_scale(component: Any) -> float:
-    """How the PCM component scales a conductor's charges (nonelectrostatic.Surface)."""
+    """How the PCM component scales a conductor's charges (nonelectrostatic.Surface).
+
+    The pipeline runs IEF-PCM only (config.DROP_COMPONENT).  COSMO's factor is kept, as are
+    C-PCM's and COSMO's charges in `apparent_charges`, because the MOIST host
+    (pyscf_moist) takes every MOIST PCM component and these descriptors are meant to follow
+    it; the conductor branches are tested on stubs only.
+    """
     import moist
 
     eps = float(component.epsilon)
@@ -752,8 +758,8 @@ def apparent_charges(view: Any, component: Any) -> Array:
     ``surface_charge``, and every PCM's potential adjoint w_phi as ``potential_adjoint``, which
     for the conductor models (C-PCM, COSMO) is q itself.  It lists both only while the charges
     are current: from an evaluation until the model is updated to a new structure, and not
-    after a failed solve.  tautomator runs IEF-PCM only (config.DROP_COMPONENT), so the
-    conductor branch is not exercised.
+    after a failed solve.  The pipeline runs IEF-PCM only (config.DROP_COMPONENT); the
+    conductor branch is kept for general use (`_charge_scale`).
     """
     import moist
 

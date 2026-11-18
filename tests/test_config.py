@@ -971,6 +971,40 @@ class TestDeprecatedSpellings:
             """)
             )
 
+    def test_a_refinement_solvent_model_that_disagrees_names_its_section(
+        self, tmp_toml: Callable[[str], Path]
+    ) -> None:
+        with pytest.raises(
+            ValueError, match=r"^\[refinement\] solvent_model = 'IEFPCM' conflicts"
+        ):
+            load_config(
+                tmp_toml("""
+                [molecule]
+                smiles = "CCO"
+                [refinement]
+                solvent_model = "IEFPCM"
+                [scoring]
+                cavity = "SvdW-DROP"
+            """)
+            )
+
+    @pytest.mark.parametrize("cavity", ["None", "NONE", "none"])
+    def test_a_gas_phase_solvent_model_takes_none_in_any_case(
+        self, tmp_toml: Callable[[str], Path], cavity: str
+    ) -> None:
+        cfg = load_config(
+            tmp_toml(f"""
+            [molecule]
+            smiles = "CCO"
+            [refinement]
+            solvation = "none"
+            [scoring]
+            solvent_model = "none"
+            cavity = "{cavity}"
+        """)
+        )
+        assert cfg.scoring.cavity is None
+
     def test_solvent_model_and_cavity_that_disagree_raise(
         self, tmp_toml: Callable[[str], Path]
     ) -> None:

@@ -569,6 +569,66 @@ class TestNudgeBeforeOptimizing:
         assert (conf.geometry is symmetric) == nudge
         assert conf.multiplicity == multiplicity
 
+    def test_an_unconverged_nudged_result_is_not_settled(
+        self, patch_drivers: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Still rolling downhill, its energy says nothing about its well's depth.
+        driver = FakeDriver(opt=[-76.40])
+        patch_drivers(driver)
+        monkeypatch.setattr(refinement, "nudge", self.fake_nudge([]))
+        settled: list[Geometry] = []
+        monkeypatch.setattr(refinement, "settle", lambda done, g, *a: settled.append(g))
+        stalls = driver.optimize
+
+        def unconverged(g: Geometry, *a: Any, **kw: Any) -> tuple[Geometry, float, bool]:
+            relaxed, energy, _ = stalls(g, *a, **kw)
+            return relaxed, energy, False
+
+        monkeypatch.setattr(driver, "optimize", unconverged)
+        out = refinement.refine(ensemble_of([-76.40]), self.cfg(), driver="pyscf")
+        (conf,) = out.charge_states[0].microstates[0].conformers
+        assert settled == [] and conf.refinement_converged is False
+
+    def test_a_failing_nudge_keeps_the_conformer(
+        self,
+        patch_drivers: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        driver = FakeDriver(opt=[-76.40])
+        patch_drivers(driver)
+
+        def broken(*a: Any, **kw: Any) -> None:
+            raise ValueError("no relabelling")
+
+        monkeypatch.setattr(refinement, "nudge", broken)
+        ens = ensemble_of([-76.40])
+        sampled = ens.charge_states[0].microstates[0].conformers[0].geometry
+        out = refinement.refine(ens, self.cfg(), driver="pyscf")
+        ms = out.charge_states[0].microstates[0]
+        assert len(ms.conformers) == 1 and ms.excluded_conformers == []
+        assert driver.starts == [sampled]
+        assert "The nudge failed" in caplog.text and "optimizing it as sampled" in caplog.text
+
+    def test_a_failing_settle_keeps_the_nudged_result(
+        self,
+        patch_drivers: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        driver = FakeDriver(opt=[-76.40])
+        patch_drivers(driver)
+        monkeypatch.setattr(refinement, "nudge", self.fake_nudge([]))
+
+        def broken(*a: Any, **kw: Any) -> None:
+            raise ValueError("no relabelling")
+
+        monkeypatch.setattr(refinement, "settle", broken)
+        out = refinement.refine(ensemble_of([-76.40]), self.cfg(), driver="pyscf")
+        (conf,) = out.charge_states[0].microstates[0].conformers
+        assert conf.geometry is driver.starts[0]
+        assert "keeping the nudged result" in caplog.text
+
     def test_no_settling_without_a_nudge(
         self, patch_drivers: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:

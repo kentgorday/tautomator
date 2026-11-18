@@ -33,6 +33,8 @@ from tautomator.nonelectrostatic import Params
 from tautomator.pyscf_nonelectrostatic_drop import (
     DropSettings,
     DropTerms,
+    _charge_scale,
+    apparent_charges,
     drop_descriptors,
     enable_self_consistent,
     post_scf_gradient,
@@ -237,3 +239,51 @@ def test_descriptors_reproduce_the_terms(cavity: str) -> None:
     scale = (78.3553 - 1.0) / 78.3553
     np.testing.assert_allclose(d.charge_field, -4.0 * np.pi / scale * q / d.areas, rtol=1e-12)
     assert np.abs(q - w_phi).max() > 1e-5 * np.abs(q).max()
+
+
+class _Field:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _View:
+    """What apparent_charges reads off an evaluated MOIST component."""
+
+    def __init__(self, **fields: np.ndarray) -> None:
+        self._fields = fields
+
+    def fields(self) -> list[_Field]:
+        return [_Field(name) for name in self._fields]
+
+    def get(self, name: str) -> np.ndarray:
+        return self._fields[name]
+
+
+class TestApparentCharges:
+    """The conductor branches the pipeline (IEF-PCM only) never takes, on stubs."""
+
+    Q = np.array([0.1, -0.2, 0.05])
+
+    def test_a_layer_model_publishes_its_charges(self) -> None:
+        view = _View(surface_charge=self.Q, potential_adjoint=2 * self.Q)
+        assert np.allclose(apparent_charges(view, moist.ModelComponentIEFPCM(32.6)), self.Q)
+
+    @pytest.mark.parametrize("conductor", ["ModelComponentCPCM", "ModelComponentCOSMO"])
+    def test_a_conductor_model_has_them_as_its_potential_adjoint(self, conductor: str) -> None:
+        component = getattr(moist, conductor)(32.6)
+        assert np.allclose(apparent_charges(_View(potential_adjoint=self.Q), component), self.Q)
+
+    def test_no_current_solve_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="no apparent surface charges"):
+            apparent_charges(_View(potential_adjoint=self.Q), moist.ModelComponentIEFPCM(32.6))
+
+    @pytest.mark.parametrize(
+        ("component", "scale"),
+        [
+            ("ModelComponentIEFPCM", 31.6 / 32.6),
+            ("ModelComponentCPCM", 31.6 / 32.6),
+            ("ModelComponentCOSMO", 31.6 / 33.1),
+        ],
+    )
+    def test_charge_scale(self, component: str, scale: float) -> None:
+        assert _charge_scale(getattr(moist, component)(32.6)) == pytest.approx(scale)

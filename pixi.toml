@@ -50,7 +50,8 @@ rdkit = ">=2024.03,<2026"
 pytest = ">=9.0.3,<10"
 mypy = ">=1.20.0,<2"
 # PySCF, the DFT backend that runs in this environment (as a Python library):
-# wB97X-3c/vDZP (default refinement) or wB97M-V + SMD (scoring).  The other
+# wB97X-3c/vDZP (default refinement) and wB97M-V/def2-QZVPPD with IEF-PCM on the
+# SvdW-DROP cavity (default scoring).  The other
 # backend, Psi4, has an environment of its own: see the psi4 feature below.
 # PySCF 2.13.1 rewrote its dispersion dispatch (PR #3209); pyscf_runner detects
 # which dispatch it has and sets the D4 composites up accordingly.  Verified on
@@ -182,8 +183,8 @@ platforms = ["osx-arm64-macos-27-2"]
 libblas = { version = "*", build = "*_newaccelerate" }
 
 [environments]
-# Both with MOIST, as the default solvent model needs it.  Every Psi4 job of a run, DROP
-# solvent models included, runs the psi4 environment's one Psi4.
+# Both with MOIST, as the default cavity (SvdW-DROP) needs it.  A run in default launches
+# the psi4 environment's Psi4 for every Psi4 job, DROP cavities included.
 default = { features = ["moist", "default-blas"], solve-group = "default" }
 psi4 = { features = ["psi4", "moist", "default-blas"], no-default-feature = true }
 # The same two on Accelerate (osx-arm64, macOS 27.2 and later).  A run in accelerate

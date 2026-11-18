@@ -72,7 +72,7 @@ symmetric shape, so without the nudge an optimizer started there stays even when
 the shape is a saddle on the refinement surface, and the ensemble keeps a
 hilltop in place of the minimum beside it. GFN2 often calls these hilltops
 minima, but its soft mode still points the right way. When a nudged conformer
-comes back with less symmetry than it started with, it is averaged over its
+converges with less symmetry than it started with, it is averaged over its
 images under the sampled symmetry and that symmetric shape is optimized (it
 stays symmetric, a few steps); if it is under 0.075 kcal/mol higher it replaces
 the result, so a nearly free rotor is not counted as a mirror pair of wells that

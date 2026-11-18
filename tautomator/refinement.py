@@ -21,7 +21,7 @@ import numpy as np
 
 from tautomator import xtb_runner
 from tautomator.config import DEFAULT_MEMORY_GB, DROP_CAVITIES, RefinementConfig
-from tautomator.conformer_symmetry import conformer_multiplicity
+from tautomator.conformer_symmetry import symmetry_number
 from tautomator.ensemble import (
     HARTREE_TO_KCAL,
     _effective_energy,
@@ -143,8 +143,8 @@ def refine(
 def _fold_shallow_wells(cs: ChargeState) -> int:
     """Drop each conformer that `nudge.fold` joins to a symmetric one; return how many.
 
-    Runs before deduplication, so the multiplicities are taken from the
-    optimized geometries here; the ones on the conformers are still sampling's.
+    Runs before deduplication, so the symmetries are taken from the optimized
+    geometries here; the multiplicities on the conformers are still sampling's.
     They only rank the conformers, so the duplicates still in the list do no
     harm.  Compares the energies the optimizations minimized: electronic plus
     solvation where the geometry was optimized in solvent, electronic alone
@@ -164,12 +164,7 @@ def _fold_shallow_wells(cs: ChargeState) -> int:
                 (cast(float, c.electronic_energy) + (c.solvation_energy or 0.0)) * HARTREE_TO_KCAL
                 for c in ms.conformers
             ],
-            [
-                float(m)
-                for m in conformer_multiplicity(
-                    np.array(coords), symbols, includes_enantiomer=ms.includes_enantiomer
-                )
-            ],
+            [symmetry_number(x, symbols) for x in coords],
             symbols,
         )
         folded += len(ms.conformers) - len(keep)
@@ -217,9 +212,19 @@ def _optimize_charge_state(
             try:
                 start, done = conf.geometry, None
                 if config.nudge:
-                    start, done = nudge(
-                        conf.geometry, cs.charge, solvent=sampling_solvent, threads=threads
-                    )
+                    try:
+                        start, done = nudge(
+                            conf.geometry, cs.charge, solvent=sampling_solvent, threads=threads
+                        )
+                    except Exception as e:
+                        # As for a failed nudged optimization below: never a reason
+                        # to lose the conformer.
+                        log.warning(
+                            f"  The nudge failed for a conformer in microstate "
+                            f"{ms.tautomer_id[:8]} ({type(e).__name__}: {e}); optimizing it "
+                            "as sampled"
+                        )
+                        start, done = conf.geometry, None
                     if done is not None:
                         more = ""
                         if done.later:
@@ -242,8 +247,19 @@ def _optimize_charge_state(
                     )
                     done = None
                     opt_geom, opt_energy, converged = at_level(conf.geometry)
-                if done is not None:
-                    settled = settle(done, opt_geom, opt_energy, at_level)
+                # An unconverged result's energy says nothing about the depth of
+                # its well: it may still be rolling downhill, so its symmetric
+                # shape is not compared with it.
+                if done is not None and converged:
+                    try:
+                        settled = settle(done, opt_geom, opt_energy, at_level)
+                    except Exception as e:
+                        log.warning(
+                            f"  Settling the nudged conformer in microstate "
+                            f"{ms.tautomer_id[:8]} failed ({type(e).__name__}: {e}); "
+                            "keeping the nudged result"
+                        )
+                        settled = None
                     if settled is not None:
                         kept = "kept the symmetric shape" if settled.replaces else "kept the nudge"
                         side = "higher" if settled.depth >= 0 else "lower"

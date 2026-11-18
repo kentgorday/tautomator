@@ -28,7 +28,8 @@ response (which PySCF's SCF gradient leaves out by default).
 
 Supported: RKS and RHF with density fitting, LDA and GGA functionals including
 hybrids and range-separated hybrids, IEF-PCM, C-PCM and COSMO (FastPCM or
-PySCF's own).  Meta-GGA and VV10 functionals are refused: PySCF has no response
+PySCF's own; the pipeline runs IEF-PCM only, the other two are kept for general
+use).  Meta-GGA and VV10 functionals are refused: PySCF has no response
 kernel for VV10, and the meta-GGA kernel contraction is not written.
 """
 

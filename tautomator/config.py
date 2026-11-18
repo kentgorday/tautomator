@@ -979,16 +979,17 @@ def _hint(key: str, allowed: frozenset[str], section: str | None = None) -> str:
     return f" (did you mean {close[0]!r}?)" if close else ""
 
 
-def _cavity_of_solvent_model(model: Any) -> str:
-    """The cavity an old [scoring] solvent_model means, or a ValueError if it named a model
-    tautomator no longer runs ("none" stays "none", the gas phase)."""
+def _cavity_of_solvent_model(model: Any, section: str = "scoring") -> str:
+    """The cavity an old solvent_model means, or a ValueError if it named a model tautomator
+    no longer runs ("none" stays "none", the gas phase).  ``section`` is where the user wrote
+    it, for the messages."""
     text = str(model)
     if text.lower() == "none":
         return "none"
     pcm, sep, cavity = text.partition("/")
     if pcm.upper().replace("-", "") not in ("IEFPCM", "PCM"):
         raise ValueError(
-            f"[scoring] solvent_model = {model!r}: tautomator runs IEF-PCM only (C-PCM, "
+            f"[{section}] solvent_model = {model!r}: tautomator runs IEF-PCM only (C-PCM, "
             "COSMO, SMD and PySCF's ddCOSMO and ddPCM are gone). Set [scoring] cavity to "
             f"one of {', '.join(CAVITIES)} instead."
         )
@@ -996,7 +997,7 @@ def _cavity_of_solvent_model(model: Any) -> str:
         return "ISWIG"  # "IEFPCM" alone was PySCF's switching/Gaussian cavity
     if cavity not in DROP_CAVITIES:
         raise ValueError(
-            f"[scoring] solvent_model = {model!r}: {cavity!r} is not a DROP cavity "
+            f"[{section}] solvent_model = {model!r}: {cavity!r} is not a DROP cavity "
             f"({' or '.join(DROP_CAVITIES)}). Set [scoring] cavity instead."
         )
     return cavity
@@ -1049,25 +1050,33 @@ def _migrate(
             f"rrho = {ref_raw['rrho']!r} ('dft' is now 'refinement', a Hessian from "
             "whatever optimized the geometry)."
         )
+    # Where the solvent_model the [scoring] branch below reads was written.
+    model_section = "scoring"
     if (model := ref_raw.pop("solvent_model", None)) is not None:
         ref_raw.setdefault("solvation", "optimize")
-        score_raw.setdefault("solvent_model", model)
+        if "solvent_model" not in score_raw:
+            score_raw["solvent_model"] = model
+            model_section = "refinement"
         log.warning(
             f"[refinement] solvent_model = {model!r} is deprecated: [refinement] "
             "solvation says how solvation enters refinement, and [scoring] cavity "
             "is the cavity for the whole run."
         )
     if (model := score_raw.pop("solvent_model", None)) is not None:
-        cavity = _cavity_of_solvent_model(model)
-        if score_raw.setdefault("cavity", cavity) != cavity:
+        cavity = _cavity_of_solvent_model(model, model_section)
+        given = score_raw.setdefault("cavity", cavity)
+        # "none" is the gas phase in any case, as _build_scoring reads it.
+        same = str(given).lower() == "none" if cavity == "none" else given == cavity
+        if not same:
             raise ValueError(
-                f"[scoring] solvent_model = {model!r} conflicts with [scoring] cavity = "
-                f"{score_raw['cavity']!r}; remove solvent_model."
+                f"[{model_section}] solvent_model = {model!r} conflicts with [scoring] cavity "
+                f"= {given!r}; remove solvent_model."
             )
-        log.warning(
-            f"[scoring] solvent_model = {model!r} is deprecated: IEF-PCM is the only "
-            f"model, and [scoring] cavity = {cavity!r} says which cavity it runs on."
-        )
+        if model_section == "scoring":
+            log.warning(
+                f"[scoring] solvent_model = {model!r} is deprecated: IEF-PCM is the only "
+                f"model, and [scoring] cavity = {cavity!r} says which cavity it runs on."
+            )
     for name, sec in (("refinement", ref_raw), ("scoring", score_raw)):
         if (solvent := sec.pop("solvent", None)) is not None:
             if mol_raw.setdefault("solvent", solvent) != solvent:

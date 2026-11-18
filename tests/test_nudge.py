@@ -25,6 +25,7 @@ from tautomator.nudge import (
     SOFT_CUTOFF,
     Nudge,
     Operation,
+    _oriented,
     fold,
     localize,
     nudge,
@@ -134,9 +135,8 @@ class TestNudge:
         assert done.symmetric_part == pytest.approx(0.0)
         step = moved.coords - WATER.coords
         assert np.linalg.norm(step, axis=1).max() == pytest.approx(AMPLITUDE)
-        assert np.allclose(
-            step / np.linalg.norm(step), ANTISYMMETRIC / np.linalg.norm(ANTISYMMETRIC)
-        )
+        along = (step * ANTISYMMETRIC).sum() / np.linalg.norm(step) / np.linalg.norm(ANTISYMMETRIC)
+        assert abs(along) == pytest.approx(1.0)
 
     def test_the_other_sign_moves_the_other_way(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stub_modes(monkeypatch, [80.0], [ANTISYMMETRIC])
@@ -221,8 +221,20 @@ class TestSecondPush:
         moved, done = nudge(WATER, 0, solvent=None)
         assert done is not None and done.frequency == 80.0 and done.later == (120.0,)
         # The softest mode keeps its whole push; the later one adds its own.
-        expected = AMPLITUDE * (unit(ANTISYMMETRIC) + unit(SECOND))
+        expected = AMPLITUDE * (unit(_oriented(ANTISYMMETRIC)) + unit(_oriented(SECOND)))
         assert np.allclose(moved.coords - WATER.coords, expected)
+
+    @pytest.mark.parametrize("signs", [(-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)])
+    def test_the_start_does_not_depend_on_the_signs_of_the_modes(
+        self, monkeypatch: pytest.MonkeyPatch, signs: tuple[float, float]
+    ) -> None:
+        # An eigensolver may hand over either sign of each mode; a mirror makes
+        # (+, +) and (-, -) the same start, but not (+, -).
+        stub_modes(monkeypatch, [80.0, 120.0], [ANTISYMMETRIC, SECOND])
+        reference, _ = nudge(WATER, 0, solvent=None)
+        stub_modes(monkeypatch, [80.0, 120.0], [signs[0] * ANTISYMMETRIC, signs[1] * SECOND])
+        flipped, _ = nudge(WATER, 0, solvent=None)
+        assert np.allclose(flipped.coords, reference.coords)
 
     def test_a_later_mode_above_the_second_cutoff_is_not(
         self, monkeypatch: pytest.MonkeyPatch
@@ -230,13 +242,13 @@ class TestSecondPush:
         stub_modes(monkeypatch, [80.0, SECOND_CUTOFF + 10.0], [ANTISYMMETRIC, SECOND])
         moved, done = nudge(WATER, 0, solvent=None)
         assert done is not None and done.later == ()
-        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(ANTISYMMETRIC))
+        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(_oriented(ANTISYMMETRIC)))
 
     def test_a_later_symmetric_mode_is_not(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stub_modes(monkeypatch, [80.0, 100.0], [ANTISYMMETRIC, SYMMETRIC])
         moved, done = nudge(WATER, 0, solvent=None)
         assert done is not None and done.later == ()
-        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(ANTISYMMETRIC))
+        assert np.allclose(moved.coords - WATER.coords, AMPLITUDE * unit(_oriented(ANTISYMMETRIC)))
 
     def test_a_first_mode_above_the_second_cutoff_brings_no_later_one(
         self, monkeypatch: pytest.MonkeyPatch
@@ -360,6 +372,26 @@ class TestSettle:
         calls: list[Geometry] = []
         assert settle(C2V, WATER, self.E, self.opt(0.01, calls)) is None and calls == []
 
+    def test_nothing_to_do_when_the_result_gained_symmetry(self) -> None:
+        # Sampled with the molecular plane alone (sigma 1, achiral), back with C2v.
+        plane = (((0, 1, 2), True),)
+        cs = Nudge(frequency=80.0, symmetric_part=0.0, operations=plane, symmetry=(1, True))
+        calls: list[Geometry] = []
+        assert settle(cs, WATER, self.E, self.opt(0.01, calls)) is None and calls == []
+
+    def test_losing_the_mirrors_counts_as_losing_symmetry(self) -> None:
+        # Recorded as sampled with sigma 3 and mirrors, back as the chiral propeller:
+        # the threefold axis survives, the mirrors do not, so the shape is tried.
+        record = Nudge(
+            frequency=80.0,
+            symmetric_part=0.0,
+            operations=operations_of(PROPELLER),
+            symmetry=(3, True),
+        )
+        calls: list[Geometry] = []
+        settle(record, PROPELLER, self.E, self.opt(0.01, calls))
+        assert len(calls) == 1
+
     def test_a_shallow_well_goes_back_to_the_symmetric_shape(self) -> None:
         calls: list[Geometry] = []
         settled = settle(C2V, STRETCHED, self.E, self.opt(0.02, calls))
@@ -424,15 +456,19 @@ class TestFold:
     """A shallow well beside a symmetric conformer of the same microstate joins it."""
 
     @staticmethod
-    def keep(other: Geometry, de: float, mult: tuple[float, float] = (0.5, 1.0)) -> list[int]:
+    def keep(
+        other: Geometry,
+        de: float,
+        sym: tuple[tuple[int, bool], tuple[int, bool]] = ((2, True), (1, True)),
+    ) -> list[int]:
         """fold() on [WATER, other], other lying de kcal/mol below WATER.
 
-        WATER's multiplicity is 1/2 (sigma 2, achiral); STRETCHED's is 1.
+        WATER is sigma 2 and achiral, STRETCHED sigma 1 and achiral.
         """
         return fold(
             [np.asarray(WATER.coords), np.asarray(other.coords)],
             [0.0, -de],
-            list(mult),
+            list(sym),
             list(WATER.symbols),
         )
 
@@ -460,9 +496,14 @@ class TestFold:
         )
         assert self.keep(far, 0.01) == [0, 1]
 
-    def test_conformers_with_as_many_states_are_left_alone(self) -> None:
-        # Nothing to fold into: neither stands for fewer states than the other.
-        assert self.keep(STRETCHED, 0.01, mult=(1.0, 1.0)) == [0, 1]
+    def test_conformers_with_the_same_symmetry_are_left_alone(self) -> None:
+        # Nothing to fold into: neither is more symmetric than the other.
+        assert self.keep(STRETCHED, 0.01, sym=((1, True), (1, True))) == [0, 1]
+
+    def test_unrelated_symmetries_are_left_alone(self) -> None:
+        # A threefold propeller stands for fewer states (2/3) than a conformer with one
+        # mirror (1), but has none of its symmetry, so it does not stand for it.
+        assert self.keep(STRETCHED, 0.01, sym=((3, False), (1, True))) == [0, 1]
 
     def test_a_turned_propeller_joins_its_threefold_shape(self) -> None:
         # Chiral both: the threefold shape stands for 2/3 of a state, the turned one for 2.
@@ -471,8 +512,8 @@ class TestFold:
         relabelled = turned[[0, 2, 3, 1, 5, 6, 4]]  # the arms counted from the next one
         coords = [np.asarray(PROPELLER.coords), relabelled]
         symbols = list(PROPELLER.symbols)
-        assert fold(coords, [0.0, -0.04], [2 / 3, 2.0], symbols) == [0]
-        assert fold(coords, [0.0, -(SETTLE + 0.01)], [2 / 3, 2.0], symbols) == [0, 1]
+        assert fold(coords, [0.0, -0.04], [(3, False), (1, False)], symbols) == [0]
+        assert fold(coords, [0.0, -(SETTLE + 0.01)], [(3, False), (1, False)], symbols) == [0, 1]
 
 
 def spring_hessian(geom: Geometry, pairs: list[tuple[int, int]]) -> np.ndarray:
@@ -572,5 +613,5 @@ class TestRealModes:
         assert len(done.later) == 1 and done.later[0] == pytest.approx(done.frequency, abs=1.0)
         _, modes = xtb_runner.normal_modes(CH3CBR3)
         (partner,) = localize([modes[1]], list(CH3CBR3.symbols))
-        expected = AMPLITUDE * (unit(modes[0]) + unit(partner))
+        expected = AMPLITUDE * (unit(_oriented(modes[0])) + unit(_oriented(partner)))
         assert np.allclose(moved.coords - CH3CBR3.coords, expected, atol=1e-6)

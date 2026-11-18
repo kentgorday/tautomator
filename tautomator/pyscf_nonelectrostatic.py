@@ -13,6 +13,9 @@ its SCF has converged, and returns the backend-neutral `nonelectrostatic.Solute`
 * the electron density and its gradient on `cavity_quadrature` grids for the
   inside and the outside of the cavity.
 
+The pipeline runs IEF-PCM only.  C-PCM and COSMO are kept for general use, as
+pyscf_fast_pcm keeps them; `_charge_scale` covers both.
+
 An ECP leaves only the valence density for the dispersion and exchange
 integrals, and puts the ECP-reduced nuclear charges in the field.  At
 def2-QZVPPD that affects iodine and heavier elements only.

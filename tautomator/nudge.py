@@ -39,21 +39,22 @@ A nudge can also do harm.  On a nearly flat valley -- a CBr3 or CF3 that turns
 almost freely, an NH2 that barely prefers to be flat -- the optimizer stops short
 of the symmetric shape it would have kept, a few hundredths of a kcal/mol below
 it, and the conformer is then called chiral and counted twice: 0.41 kcal/mol for
-nothing.  So `settle` follows the optimization.  When a nudged conformer comes
-back with a different symmetry than it started with, it is averaged over its
-images under the operations it was sampled with, and that symmetric shape is
-optimized; started exactly symmetric, the optimizer keeps it so, which is the
-trap put to use.  If the nudged result is less than SETTLE below it, the
-symmetric shape replaces it.  SETTLE is where the quartic double-well count
-n*(dE/kT) is sqrt(2): below it a single symmetric well is the nearer of the two
-whole counts, above it the mirror pair is, and either is off by at most RT ln
-sqrt(2) = 0.21 kcal/mol.  Two starts can reach the same shallow well and settle
-it differently, each averaging toward the symmetric shape its own pairing points
-at; `fold` applies the same rule across the microstate before deduplication,
-with the symmetric conformers already there as the shapes, which also catches
-such pairs that sampling handed over unnudged.  Before, because a well this
-shallow can deduplicate with its symmetric shape, and the survivor of that is
-picked by an energy that still holds sampling's RRHO.
+nothing.  So `settle` follows the optimization.  When a nudged optimization
+converges with less symmetry than the conformer started with, its result is
+averaged over its images under the operations it was sampled with, and that
+symmetric shape is optimized; started exactly symmetric, the optimizer keeps it
+so, which is the trap put to use.  If the nudged result is less than SETTLE
+below it, the symmetric shape replaces it.  SETTLE is where the quartic
+double-well count n*(dE/kT) (docs/nudge.md, SETTLE) is sqrt(2): below it a
+single symmetric well is the nearer of the two whole counts, above it the mirror
+pair is, and either is off by at most RT ln sqrt(2) = 0.21 kcal/mol.  Two starts
+can reach the same shallow well and settle it differently, each averaging toward
+the symmetric shape its own pairing points at; `fold` applies the same rule
+across the microstate before deduplication, with the symmetric conformers
+already there as the shapes, which also catches such pairs that sampling handed
+over unnudged.  Before, because a well this shallow can deduplicate with its
+symmetric shape, and the survivor of that is picked by an energy that still
+holds sampling's RRHO.
 
 The GFN2 Hessian is the plain one sampling takes (the conformer is a GFN2
 minimum from `sampling._reminimize`), in sampling's solvent, and it is taken
@@ -142,6 +143,23 @@ def _unit(vec: NDArray[np.float64]) -> NDArray[np.float64]:
     return np.asarray(vec / np.linalg.norm(vec, axis=1).max())
 
 
+def _oriented(vec: NDArray[np.float64]) -> NDArray[np.float64]:
+    """``vec`` or ``-vec``, whichever leans along one fixed direction.
+
+    An eigensolver gives each mode an arbitrary sign, and two BLAS builds can
+    give it different ones.  For the softest mode alone that does not matter, as
+    a mirror carries one direction onto the other, but the sign of each later
+    push relative to it does: a mirror maps (+, +) onto (-, -), not onto (+, -).
+    Fixing every sign against one direction makes the start the same for a given
+    input geometry wherever it is computed.  The direction (sines of multiples of
+    the golden angle, coordinate by coordinate) pairs no atom with another, so a
+    mode that lies across it would be a coincidence.
+    """
+    x = np.asarray(vec, dtype=np.float64)
+    reference = np.sin(2.399963229728653 * np.arange(1, x.size + 1)).reshape(x.shape)
+    return x if float((x * reference).sum()) >= 0.0 else -x
+
+
 def localize(
     modes: Sequence[NDArray[np.float64]], symbols: Sequence[str], *, sweeps: int = 200
 ) -> list[NDArray[np.float64]]:
@@ -201,7 +219,8 @@ def nudge(
 
     The start is ``amplitude`` along the softest symmetry-breaking mode below
     ``cutoff``, plus ``amplitude`` along each later breaking mode below
-    ``second_cutoff``, those later ones localized among themselves.  Returns
+    ``second_cutoff``, those later ones localized among themselves, each mode's
+    sign fixed by `_oriented`.  Returns
     ``geom`` itself and None when the conformer is linear, has no symmetry
     operation or no symmetry-breaking mode below ``cutoff``, or its GFN2
     Hessian fails.  ``sign`` picks the direction of the whole move.
@@ -226,9 +245,10 @@ def nudge(
     if not breaking:
         return geom, None
     (freq, kept, first), later = breaking[0], breaking[1:]
-    step = _unit(first)
+    step = _unit(_oriented(first))
     if later:
-        step = step + sum(_unit(v) for v in localize([m for _, _, m in later], geom.symbols))
+        localized = localize([m for _, _, m in later], geom.symbols)
+        step = step + sum(_unit(_oriented(v)) for v in localized)
     coords = np.asarray(geom.coords) + sign * amplitude * step
     moved = Geometry(symbols=geom.symbols, coords=coords)
     return moved, Nudge(
@@ -290,6 +310,16 @@ class Settled:
         return self.depth < SETTLE
 
 
+def _at_least(a: tuple[int, bool], b: tuple[int, bool]) -> bool:
+    """Whether symmetry ``a`` keeps all of symmetry ``b``, as far as (sigma, achiral) tell.
+
+    The symmetry number counts the proper rotations, and a subgroup's order
+    divides the group's, so ``a``'s must be a multiple of ``b``'s; and ``a`` must
+    be achiral if ``b`` is.
+    """
+    return a[0] % b[0] == 0 and (a[1] or not b[1])
+
+
 def settle(
     done: Nudge,
     geom: Geometry,
@@ -298,14 +328,15 @@ def settle(
 ) -> Settled | None:
     """The symmetric shape beside a nudged optimization's result, if there is one to compare.
 
-    None when the result kept the symmetry the conformer was sampled with, sits
-    more than SETTLE_REACH from one of its images, or the symmetric shape could
-    not be optimized: it failed, did not converge, or rolled off its symmetry.
+    None when the result kept the symmetry the conformer was sampled with (or
+    gained more), sits more than SETTLE_REACH from one of its images, or the
+    symmetric shape could not be optimized: it failed, did not converge, or rolled
+    off its symmetry.
     ``optimize`` takes a geometry and returns ``(geometry, energy, converged)``
     at the level of ``energy`` (Hartree).  Whether the shape replaces the result
     is `Settled.replaces`.
     """
-    if symmetry_number(geom.coords, list(geom.symbols)) == done.symmetry:
+    if _at_least(symmetry_number(geom.coords, list(geom.symbols)), done.symmetry):
         return None
     shape, gap = symmetrize(geom, done.operations)
     if gap > SETTLE_REACH:
@@ -318,7 +349,7 @@ def settle(
     if not converged:
         log.warning("    The symmetric shape did not converge; keeping the nudged result")
         return None
-    if symmetry_number(relaxed.coords, list(relaxed.symbols)) != done.symmetry:
+    if not _at_least(symmetry_number(relaxed.coords, list(relaxed.symbols)), done.symmetry):
         log.warning("    The symmetric shape lost its symmetry; keeping the nudged result")
         return None
     return Settled(relaxed, e_relaxed, (e_relaxed - energy) * HARTREE_TO_KCAL)
@@ -327,7 +358,7 @@ def settle(
 def fold(
     coords: list[NDArray[np.float64]],
     energies: list[float],
-    multiplicities: list[float],
+    symmetries: list[tuple[int, bool]],
     symbols: list[str],
 ) -> list[int]:
     """Indices of a microstate's conformers to keep once shallow wells join their symmetric shape.
@@ -337,16 +368,20 @@ def fold(
     its pairing points at a different, deeper symmetric shape -- a CBr3 turned
     past the next symmetric position -- and the well then stays a mirror pair
     beside a symmetric conformer that already stands for it.  So each conformer
-    is also compared with every conformer of fewer states (lower multiplicity:
-    achiral where it is chiral, or a higher symmetry number) in its microstate:
-    it is dropped when it lies within SETTLE of one that sits within half
+    is also compared with every more symmetric conformer of its microstate (a
+    different (sigma, achiral) that keeps all of this one's, `_at_least`): it is
+    dropped when it lies within SETTLE of one that sits within half
     SETTLE_REACH of it, the rule settle applies, with the shape taken from the
     ensemble.  Half, because the symmetric shape lies halfway to the result's
     image.  The distance is the largest single-atom one under the best
     relabelling, the mirror image included.  Within SETTLE either way: a little
     above the symmetric conformer is an optimizer that stopped short of it, but
     one well above it, however close, is a different structure and stays.
-    ``energies`` in kcal/mol, at the level the geometries were optimized.
+    Fewer states alone is not enough: a threefold propeller (sigma 3, chiral)
+    stands for fewer states than a conformer with one mirror, but has none of
+    its symmetry, so neither stands for the other.  ``energies`` in kcal/mol, at
+    the level the geometries were optimized; ``symmetries`` as
+    `conformer_symmetry.symmetry_number` gives them.
     """
     reach = SETTLE_REACH / 2
 
@@ -356,7 +391,8 @@ def fold(
     keep = []
     for i in range(len(coords)):
         folded = any(
-            multiplicities[j] < multiplicities[i]
+            symmetries[j] != symmetries[i]
+            and _at_least(symmetries[j], symmetries[i])
             and abs(energies[j] - energies[i]) < SETTLE
             and near(coords[i], coords[j])
             for j in range(len(coords))

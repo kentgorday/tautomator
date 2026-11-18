@@ -23,16 +23,24 @@ It is on by default (`[refinement] nudge = true`).
    totally symmetric, if that mode is softer than `SOFT_CUTOFF`. The same start
    also moves `AMPLITUDE` along each later breaking mode softer than
    `SECOND_CUTOFF`, those modes first rotated among themselves so that each
-   moves one group (`localize`). Linear molecules are skipped.
-2. **Settle** (after it). If the nudged result has a different symmetry than
-   the conformer was sampled with, and no atom sits more than `SETTLE_REACH`
-   from its image, the result is averaged over its images under the sampled
-   operations, and that symmetric shape is optimized at the refinement level.
-   If the result lies less than `SETTLE` below it, the symmetric shape replaces
-   it.
+   moves one group (`localize`). Each mode's sign is fixed against one
+   direction, so the start does not depend on the sign the eigensolver gave it:
+   a mirror carries the whole move onto its negative, but not onto a move with
+   one later push reversed. Linear molecules are skipped.
+2. **Settle** (after it). If the nudged optimization converged with less
+   symmetry than the conformer was sampled with (a symmetry number that is not a
+   multiple of the sampled one's, or chiral where it was achiral), and no atom
+   sits more than `SETTLE_REACH` from its image, the result is averaged over its
+   images under the sampled operations, and that symmetric shape is optimized at
+   the refinement level. If the result lies less than `SETTLE` below it, the
+   symmetric shape replaces it. An unconverged result is left alone: its energy
+   says nothing about the depth of its well.
 3. **Fold** (before deduplication). In each microstate, a conformer within
-   `SETTLE` of one with a lower multiplicity, and within `SETTLE_REACH / 2` of
-   it, is dropped. This catches a shallow well that two starts reached and
+   `SETTLE` of a more symmetric one (a different symmetry that keeps all of its
+   own, in the sense of step 2), and within `SETTLE_REACH / 2` of it, is
+   dropped. Standing for fewer states is not enough: a threefold propeller
+   (sigma 3, chiral) counts fewer than a conformer with one mirror, but has
+   none of its symmetry. This catches a shallow well that two starts reached and
    settled differently, and such pairs that sampling handed over unnudged. It
    runs before deduplication because a well this shallow can lie near enough to
    its symmetric shape to deduplicate with it and still count as chiral, and
@@ -43,7 +51,8 @@ It is on by default (`[refinement] nudge = true`).
    twisted, and deduplication kept the second at twice the count.
 
 If the nudged optimization raises, the conformer is optimized again from its
-sampled geometry; a failed GFN2 Hessian skips the nudge.
+sampled geometry. A nudge that raises, its GFN2 Hessian included, is skipped,
+and a settle that raises keeps the nudged result: neither loses the conformer.
 
 ## Constants
 
@@ -89,10 +98,19 @@ the rotation, so its push is the one it had before (Measurements, second push).
 
 **SETTLE.** On a double well whose two minima lie ΔE below the barrier between
 them, the classical count of states runs from 1 (ΔE = 0, a single flat-bottomed
-well) to 2 (a deep pair). The quartic count n*(ΔE/kT) crosses √2 at
-ΔE = 0.075 kcal/mol. Below that, one symmetric well is the nearer of the two
-whole counts, and above it the mirror pair is. Either way the count is off by at
-most RT ln √2 = 0.21 kcal/mol.
+well) to 2 (a deep pair). The quartic count n*(ΔE/kT) models the pair as
+`V(x) = ΔE (x²/x0² - 1)²`. It divides that well's classical configuration
+integral by the integral of one harmonic well with the curvature at its minima,
+`8 ΔE / x0²`. With `u = x/x0` and `β = ΔE/kT`:
+
+    n*(β) = min(2, max(1, ∫ exp(-β (u² - 1)²) du / sqrt(π / (4β))))
+
+with the integral over all u. The ratio drops below 1 under ΔE = 0.022
+kcal/mol, where one harmonic well no longer describes a flat-bottomed one, and
+overshoots 2 (2.25 at β ≈ 2) before it returns to it; hence the limits. At 298.15 K it crosses √2 at ΔE = 0.073
+kcal/mol, which `SETTLE` rounds to 0.075 (n* = 1.42 there). Below that, one
+symmetric well is the nearer of the two whole counts, and above it the mirror
+pair is. Either way the count is off by at most RT ln √2 = 0.21 kcal/mol.
 
 ## Measurements
 
@@ -184,13 +202,14 @@ symmetric shape. The 37 nudged PySCF runs took 1.28× the unnudged steps.
   in the gas phase) is reached with and without the nudge. p-Nitroaniline in
   water stays planar in both.
 
-- *Two soft sites.* 2-Methylpyridine's saddle is freed. Both conformers of
-  N-methylacetamide keep a methyl on its hilltop (−26 and −55 cm⁻¹), 0.10 and
-  0.01 kcal/mol above their minima, and one conformer of 2,6-lutidine keeps one,
-  0.32 kcal/mol above the minimum it belongs to. For the first of these and for
-  the lutidine conformer, a push along the softest breaking GFN2 mode at the
-  refined geometry comes back, and one along the second-softest reaches the
-  minimum. Unnudged, N-methylacetamide keeps four conformers, and the lowest
+- *Two soft sites* (with one push, before the second push below).
+  2-Methylpyridine's saddle is freed. Both conformers of N-methylacetamide keep
+  a methyl on its hilltop (−26 and −55 cm⁻¹), 0.10 and 0.01 kcal/mol above
+  their minima, and one conformer of 2,6-lutidine keeps one, 0.32 kcal/mol
+  above the minimum it belongs to. For the first of these and for the lutidine
+  conformer, a push along the softest breaking GFN2 mode at the refined
+  geometry comes back, and one along the second-softest reaches the minimum.
+  Unnudged, N-methylacetamide keeps four conformers, and the lowest
   2,6-lutidine conformer has both methyls on hilltops.
 - *A top beside an asymmetric group.* N-Ethylpivalamide,
   N-ethyltrifluoroacetamide, tert-butyl N-methylcarbamate, tert-butyl acetate
