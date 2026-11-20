@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 
@@ -647,6 +648,39 @@ class TestWellRecord:
         back = load_ensemble(serialize_ensemble(ens, tmp_path))
         a, b = back.charge_states[0].microstates[0].conformers
         assert a.well == self.WELL and b.well is None
+
+    def test_round_trips_the_dropped_shape(self, tmp_path: Path) -> None:
+        water = np.array([[0.0, 0.0, 0.0], [0.0, 0.757, 0.586], [0.0, -0.757, 0.586]])
+        shape = Geometry(("O", "H", "H"), water + np.array([0.0, 0.1, 0.0]))
+        well = dataclasses.replace(self.WELL, dropped=shape)
+        kept = Conformer(geometry=Geometry(("O", "H", "H"), water), electronic_energy=-76.4)
+        kept.well = well
+        ms = Microstate(tautomer_id="O", conformers=[kept], smiles="O")
+        ens = Ensemble(
+            input_smiles="O", charge_states={0: ChargeState(charge=0, microstates=[ms])}
+        )
+        path = serialize_ensemble(ens, tmp_path)
+        raw = json.loads(path.read_text())
+        assert raw["charge_states"]["0"]["microstates"][0]["conformers"][0]["well"]["dropped"]
+        (back,) = load_ensemble(path).charge_states[0].microstates[0].conformers
+        assert back.well == self.WELL and back.well is not None
+        assert back.well.dropped is not None
+        assert back.well.dropped.symbols == ("O", "H", "H")
+        assert np.allclose(back.well.dropped.coords, shape.coords)
+
+    def test_a_record_from_before_the_dropped_shape_loads(self, tmp_path: Path) -> None:
+        water = Geometry(("O", "H", "H"), np.eye(3))
+        conf = Conformer(geometry=water, electronic_energy=-76.4, well=self.WELL)
+        ms = Microstate(tautomer_id="O", conformers=[conf], smiles="O")
+        ens = Ensemble(
+            input_smiles="O", charge_states={0: ChargeState(charge=0, microstates=[ms])}
+        )
+        path = serialize_ensemble(ens, tmp_path)
+        raw = json.loads(path.read_text())
+        del raw["charge_states"]["0"]["microstates"][0]["conformers"][0]["well"]["dropped"]
+        path.write_text(json.dumps(raw))
+        (back,) = load_ensemble(path).charge_states[0].microstates[0].conformers
+        assert back.well == self.WELL and back.well is not None and back.well.dropped is None
 
     def test_an_older_file_loads_without_one(self, tmp_path: Path) -> None:
         water = Geometry(symbols=("O", "H", "H"), coords=np.eye(3))

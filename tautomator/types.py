@@ -66,12 +66,20 @@ class Well:
     multiplicity the kept conformer has.  Both multiplicities are counted as
     the run counts them, so a well that breaks only a methyl's symmetry counts
     the same either way when tops are collapsed, and needs nothing.
+
+    ``dropped`` is the shape the comparison did not keep, optimized at the
+    refinement level, its energy ``depth`` from the kept one's: the symmetric
+    shape when the well was kept, the well when the symmetric shape was.  It
+    is what a finished run needs to rescore the depth at the scoring level, or
+    to give the well a Hessian of its own.  It is in the atom order of the
+    conformer's microstate, and is left out of comparisons.
     """
 
     depth: float  # kcal/mol the well lies below its symmetric shape; negative when above
     symmetric_multiplicity: float  # what the symmetric shape counts
     broken_multiplicity: float  # what the well counts as a conformer of its own
     source: Literal["settle", "fold"]
+    dropped: Geometry | None = field(default=None, compare=False)
 
 
 @dataclass

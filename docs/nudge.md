@@ -119,7 +119,11 @@ pair is. Either way the count is off by at most RT ln √2 = 0.21 kcal/mol.
 The rounding is kept apart from the comparison. Each conformer that settle or
 fold kept for a well and its symmetric shape records the comparison in
 `ensemble.json` (`Conformer.well`): the depth, what the symmetric shape counts,
-what the well counts as a conformer of its own, and which step made it. The
+what the well counts as a conformer of its own, which step made it, and the
+coordinates of the shape it did not keep. That shape lets a finished run
+rescore the depth at the scoring level, or give the well its own Hessian, for
+the few records near `SETTLE`. A conformer re-filed under another microstate
+loses its record. The
 smooth count, the symmetric shape's multiplicity times n*(depth/kT), can then
 be applied to a finished run from these alone. Both multiplicities are counted
 as the run counts them, so with methyl-type tops collapsed a well that only

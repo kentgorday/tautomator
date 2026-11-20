@@ -559,6 +559,9 @@ class TestNudgeBeforeOptimizing:
             source="fold",
         )
         assert confs[0].well == (folded if kept == 1 else None)
+        if kept == 1:
+            assert confs[0].well is not None and confs[0].well.dropped is not None
+            assert np.allclose(confs[0].well.dropped.coords, geom(0.4).coords)
 
     @pytest.mark.parametrize(("nudge", "multiplicity"), [(True, 0.5), (False, 1.0)])
     def test_folds_before_deduplicating(
@@ -693,6 +696,9 @@ class TestWellRecord:
             source="settle",
         )
         assert conf.multiplicity == (0.5 if replaced else 1.0)
+        # The shape not kept: the nudged result, or the symmetric shape.
+        assert conf.well is not None
+        assert conf.well.dropped is (driver.starts[0] if replaced else shape)
 
 
 class TestCollapsedTops:

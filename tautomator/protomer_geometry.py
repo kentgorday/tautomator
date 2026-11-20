@@ -950,13 +950,12 @@ def _repair_labelled(cs: ChargeState, stage: ExclusionStage) -> MigrationReport:
 
     for pos, ms in enumerate(cs.microstates):
         ms.conformers = keep[pos]
-    for target, source, conf, laid_out in moves:
+    for target, _source, conf, laid_out in moves:
         conf.geometry = laid_out
-        if (
-            cs.microstates[target].includes_enantiomer
-            != cs.microstates[source].includes_enantiomer
-        ):
-            conf.well = None  # its counts were taken under the old label's enantiomer rule
+        # A settle record describes the conformer under its old label: its counts
+        # follow that label's enantiomer rule, and its dropped shape keeps that
+        # label's atom order, which the lay-out above may have changed.
+        conf.well = None
         cs.microstates[target].conformers.append(conf)
 
     return report

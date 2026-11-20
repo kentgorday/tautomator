@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from rdkit import Chem
@@ -282,6 +283,27 @@ def deduplicate_charge_state(
     return before, after
 
 
+def _well_data(well: Well | None) -> dict[str, object] | None:
+    """A `Well` as JSON: the dropped shape by its coordinates alone, in the conformer's atoms."""
+    if well is None:
+        return None
+    data: dict[str, object] = {
+        f.name: getattr(well, f.name) for f in dataclasses.fields(well) if f.name != "dropped"
+    }
+    data["dropped"] = None if well.dropped is None else well.dropped.coords.tolist()
+    return data
+
+
+def _load_well(data: dict[str, Any] | None, symbols: tuple[str, ...]) -> Well | None:
+    """`_well_data` read back; a record from before ``dropped`` was kept has none."""
+    if not data:
+        return None
+    fields = dict(data)
+    coords = fields.pop("dropped", None)
+    dropped = None if coords is None else Geometry(symbols=symbols, coords=np.array(coords))
+    return Well(**fields, dropped=dropped)
+
+
 def serialize_ensemble(ensemble: Ensemble, output_dir: Path) -> Path:
     """Write ensemble to a single JSON file with inline coordinates.
 
@@ -313,7 +335,7 @@ def serialize_ensemble(ensemble: Ensemble, output_dir: Path) -> Path:
                         "weight": conf.weight,
                         "refinement_converged": conf.refinement_converged,
                         "multiplicity": conf.multiplicity,
-                        "well": None if conf.well is None else dataclasses.asdict(conf.well),
+                        "well": _well_data(conf.well),
                     }
                 )
             excluded_list: list[dict[str, object]] = []
@@ -396,7 +418,7 @@ def load_ensemble(path: Path) -> Ensemble:
                         multiplicity=conf_data.get("multiplicity", 1.0),
                         # Absent before the record existed, so no schema bump: such a
                         # conformer simply has no comparison on record.
-                        well=Well(**conf_data["well"]) if conf_data.get("well") else None,
+                        well=_load_well(conf_data.get("well"), geom.symbols),
                     )
                 )
             # Absent in files written before excluded_conformers existed, which

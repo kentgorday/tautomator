@@ -31,7 +31,7 @@ from tautomator.protomer_geometry import (
 )
 from tautomator.rdkit_utils import canonical_smiles, smiles_to_3d
 from tautomator.tautomer_dedup import geometric_fingerprint, heavy_components
-from tautomator.types import ChargeState, Conformer, Geometry, Microstate
+from tautomator.types import ChargeState, Conformer, Geometry, Microstate, Well
 
 
 def _embed(smiles: str, seed: int | None = None) -> tuple[Geometry, str]:
@@ -514,9 +514,15 @@ class TestOneHeavyAtomOrderPerMolecule:
         oxygens = [i for i, s in enumerate(geom.symbols) if s == "O"]
         acid_h = next(h for h in geom.hydrogen_indices if _owner_of(geom, h) in oxygens)
         source.conformers[0].geometry = _move_h(geom, acid_h, nitrogen)
+        moving = source.conformers[0]
+        moving.well = Well(
+            depth=0.04, symmetric_multiplicity=1.0, broken_multiplicity=2.0, source="settle"
+        )
 
         cs = ChargeState(charge=1, microstates=[source, target])
         assert repair_migrated_conformers(cs, stage="refinement").moved == 1
+        # Its record was taken under the old label, in the old atom order.
+        assert any(c is moving for c in target.conformers) and moving.well is None
 
         expected = tuple(
             a.GetSymbol() for a in template_from_smiles(target.smiles or "").GetAtoms()

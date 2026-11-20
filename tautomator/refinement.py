@@ -173,7 +173,8 @@ def _fold_shallow_wells(cs: ChargeState, collapse_tops: bool) -> int:
     otherwise.  ``collapse_tops`` as deduplication will use it, so that a
     symmetric conformer whose methyl stopped turned off the mirror still counts
     as symmetric here.  The symmetric conformer kept gets a `Well` for the
-    lowest one folded into it, unless settle already gave it one.
+    lowest one folded into it, with that one's geometry, unless settle already
+    gave it one.
     """
     folded = 0
     for ms in cs.microstates:
@@ -198,6 +199,7 @@ def _fold_shallow_wells(cs: ChargeState, collapse_tops: bool) -> int:
                     symmetric_multiplicity=_multiplicity(ms, coords[j], collapse_tops),
                     broken_multiplicity=_multiplicity(ms, coords[i], collapse_tops),
                     source="fold",
+                    dropped=ms.conformers[i].geometry,
                 )
         folded += len(into)
         ms.conformers = [c for k, c in enumerate(ms.conformers) if k not in into]
@@ -308,6 +310,7 @@ def _optimize_charge_state(
                             ),
                             broken_multiplicity=_multiplicity(ms, opt_geom.coords, collapse),
                             source="settle",
+                            dropped=opt_geom if settled.replaces else settled.geometry,
                         )
                         if settled.replaces:
                             opt_geom, opt_energy = settled.geometry, settled.energy
