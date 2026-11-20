@@ -83,6 +83,7 @@ from tautomator.conformer_symmetry import (
     superpose,
     symmetry_number,
     symmetry_operations,
+    with_tops_collapsed,
 )
 from tautomator.ensemble import HARTREE_TO_KCAL
 from tautomator.types import Geometry
@@ -360,6 +361,7 @@ def fold(
     energies: list[float],
     symmetries: list[tuple[int, bool]],
     symbols: list[str],
+    collapse_tops: bool = False,
 ) -> list[int]:
     """Indices of a microstate's conformers to keep once shallow wells join their symmetric shape.
 
@@ -381,23 +383,59 @@ def fold(
     stands for fewer states than a conformer with one mirror, but has none of
     its symmetry, so neither stands for the other.  ``energies`` in kcal/mol, at
     the level the geometries were optimized; ``symmetries`` as
-    `conformer_symmetry.symmetry_number` gives them.
+    `conformer_symmetry.symmetry_number` gives them, with ``collapse_tops`` as
+    passed here.  With it a pair is also near when it is within reach with
+    methyl-type tops collapsed, as deduplication compares them, so that a
+    methyl turned another way puts it no farther off.
+    """
+    into = fold_into(coords, energies, symmetries, symbols, collapse_tops)
+    return [i for i in range(len(coords)) if i not in into]
+
+
+def fold_into(
+    coords: list[NDArray[np.float64]],
+    energies: list[float],
+    symmetries: list[tuple[int, bool]],
+    symbols: list[str],
+    collapse_tops: bool = False,
+) -> dict[int, int]:
+    """`fold`'s drops, each mapped to the kept conformer that stands for it.
+
+    Of the symmetric conformers a dropped one qualifies for, the lowest; when
+    that one is dropped too, for a still more symmetric one, the drop follows
+    it to where it is kept.  The chain ends, since each step gains symmetry.
     """
     reach = SETTLE_REACH / 2
+    views = [with_tops_collapsed(x, symbols) for x in coords] if collapse_tops else []
 
-    def near(a: NDArray[np.float64], b: NDArray[np.float64]) -> bool:
-        return min(best_max_distance(a, b, symbols, mirror=m) for m in (False, True)) <= reach
+    def within(a: NDArray[np.float64], b: NDArray[np.float64], s: list[str]) -> bool:
+        return min(best_max_distance(a, b, s, mirror=m) for m in (False, True)) <= reach
 
-    keep = []
+    def near(i: int, j: int) -> bool:
+        # Collapsing is to discount a methyl's turn, not to lose a pair the
+        # tops as they stand already put within reach: it moves the
+        # superposition too, by a few hundredths of an Angstrom.
+        if within(coords[i], coords[j], symbols):
+            return True
+        if not views:
+            return False
+        (tops_i, a, s), (tops_j, b, _) = views[i], views[j]
+        return tops_i == tops_j and within(a, b, s)
+
+    into: dict[int, int] = {}
     for i in range(len(coords)):
-        folded = any(
-            symmetries[j] != symmetries[i]
-            and _at_least(symmetries[j], symmetries[i])
-            and abs(energies[j] - energies[i]) < SETTLE
-            and near(coords[i], coords[j])
+        hosts = [
+            j
             for j in range(len(coords))
             if j != i
-        )
-        if not folded:
-            keep.append(i)
-    return keep
+            and symmetries[j] != symmetries[i]
+            and _at_least(symmetries[j], symmetries[i])
+            and abs(energies[j] - energies[i]) < SETTLE
+            and near(i, j)
+        ]
+        if hosts:
+            into[i] = min(hosts, key=lambda j: energies[j])
+    for i in into:
+        while into[i] in into:
+            into[i] = into[into[i]]
+    return into

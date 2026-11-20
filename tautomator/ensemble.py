@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from tautomator.types import (
     ExcludedConformer,
     Geometry,
     Microstate,
+    Well,
 )
 
 # Constants
@@ -180,6 +182,8 @@ def deduplicate_conformers(
     conformers: list[Conformer],
     includes_enantiomer: bool = False,
     ethr_kcal: float | None = None,
+    collapse_tops: bool = False,
+    stale_rrho: bool = False,
 ) -> list[Conformer]:
     """Collapse symmetry-duplicate conformers and set each survivor's multiplicity.
 
@@ -197,6 +201,18 @@ def deduplicate_conformers(
     threshold. Worth using on unrelaxed geometries, where two structures can
     sit within the RMSD threshold and still differ substantially in energy;
     unnecessary once geometries are optimized.
+
+    ``collapse_tops`` treats methyl-type tops as turning freely, both in which
+    conformers are one state and in what each counts (see
+    `conformer_symmetry.deduplicate`).  A group can then hold a methyl's minimum
+    and its hilltop, which differ by more than any duplicates do.
+
+    Each group keeps a converged geometry if it has one, then the lowest in
+    free energy.  ``stale_rrho`` says the RRHO terms were taken at other
+    geometries, as at refinement before its Hessians, and the lowest is then
+    taken in the energy the geometries were optimized on, electronic plus
+    solvation.  A survivor that has no `Well` takes the record of the lowest
+    member that has one.
 
     All conformers must share one atom ordering, which holds because they
     describe a single microstate and a microstate is one labelled species.
@@ -221,16 +237,24 @@ def deduplicate_conformers(
         if ethr_kcal is not None
         else None
     )
-    groups = deduplicate(coords, symbols, energies=energies, ethr=ethr_kcal)
+    groups = deduplicate(
+        coords, symbols, energies=energies, ethr=ethr_kcal, collapse_tops=collapse_tops
+    )
 
-    # Prefer a converged geometry, then the lowest energy. At refinement this
-    # energy mixes DFT electronic/solvation with the stale xTB-geometry RRHO
-    # from sampling, which is fine: it only picks between near-identical
-    # structures.
-    keys = [(0 if c.refinement_converged is not False else 1, c.free_energy) for c in conformers]
+    def energy(c: Conformer) -> float:
+        if stale_rrho and c.electronic_energy is not None:
+            return c.electronic_energy + (c.solvation_energy or 0.0)
+        return c.free_energy
+
+    keys = [(0 if c.refinement_converged is not False else 1, energy(c)) for c in conformers]
     keep = [min(g, key=lambda k: keys[k]) for g in groups]
     survivors = [conformers[k] for k in keep]
-    mult = conformer_multiplicity(coords[keep], symbols, includes_enantiomer=includes_enantiomer)
+    for conf, group in zip(survivors, groups, strict=True):
+        if conf.well is None and (recorded := [k for k in group if conformers[k].well]):
+            conf.well = conformers[min(recorded, key=lambda k: keys[k])].well
+    mult = conformer_multiplicity(
+        coords[keep], symbols, includes_enantiomer=includes_enantiomer, collapse_tops=collapse_tops
+    )
     for conf, m in zip(survivors, mult, strict=True):
         conf.multiplicity = float(m)
     return survivors
@@ -239,16 +263,21 @@ def deduplicate_conformers(
 def deduplicate_charge_state(
     cs: ChargeState,
     ethr_kcal: float | None = None,
+    collapse_tops: bool = False,
+    stale_rrho: bool = False,
 ) -> tuple[int, int]:
     """Deduplicate every microstate of a charge state; return ``(before, after)``.
 
     Deduplication runs *within* each microstate: conformers of different
     microstates are different species, so they are never compared.
+    ``collapse_tops`` and ``stale_rrho`` as for `deduplicate_conformers`.
     """
     before = after = 0
     for ms in cs.microstates:
         before += len(ms.conformers)
-        ms.conformers = deduplicate_conformers(ms.conformers, ms.includes_enantiomer, ethr_kcal)
+        ms.conformers = deduplicate_conformers(
+            ms.conformers, ms.includes_enantiomer, ethr_kcal, collapse_tops, stale_rrho
+        )
         after += len(ms.conformers)
     return before, after
 
@@ -284,6 +313,7 @@ def serialize_ensemble(ensemble: Ensemble, output_dir: Path) -> Path:
                         "weight": conf.weight,
                         "refinement_converged": conf.refinement_converged,
                         "multiplicity": conf.multiplicity,
+                        "well": None if conf.well is None else dataclasses.asdict(conf.well),
                     }
                 )
             excluded_list: list[dict[str, object]] = []
@@ -364,6 +394,9 @@ def load_ensemble(path: Path) -> Ensemble:
                         weight=conf_data.get("weight"),
                         refinement_converged=conf_data.get("refinement_converged"),
                         multiplicity=conf_data.get("multiplicity", 1.0),
+                        # Absent before the record existed, so no schema bump: such a
+                        # conformer simply has no comparison on record.
+                        well=Well(**conf_data["well"]) if conf_data.get("well") else None,
                     )
                 )
             # Absent in files written before excluded_conformers existed, which

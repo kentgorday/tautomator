@@ -15,12 +15,14 @@ from tautomator.conformer_symmetry import (
     conformer_multiplicity,
     deduplicate,
     effective_energy_offset,
+    h_tops,
     symmetry_number,
     symmetry_operations,
 )
 from tautomator.ensemble import HARTREE_TO_KCAL
 from tautomator.sampling import _filter_by_energy_window
 from tautomator.types import Conformer, Geometry
+from tests.top_cases import acetonitrile, ethane, ring, trihalo_ethane
 
 # Staggered methylammonium, C3v, from a wB97M-V/def2-QZVPPD optimization.
 # Atom order is H C H H N H H H: methyl hydrogens 0/2/3, ammonium 5/6/7.
@@ -338,3 +340,95 @@ class TestTruncationIsReported:
         assert symmetry_number(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS)[0] == 3
         assert len(clipped) == 1  # the identity, and nothing else
         assert len(full) > len(clipped)
+
+
+# ---------------------------------------------------------------------------
+# Methyl-type tops
+# ---------------------------------------------------------------------------
+
+
+class TestHTops:
+    def test_finds_both_tops_of_methylammonium(self) -> None:
+        assert h_tops(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS) == [(1, (0, 2, 3)), (4, (5, 6, 7))]
+
+    def test_a_ch2_or_ch4_is_no_top(self) -> None:
+        water, symbols = _water()
+        assert h_tops(water, symbols) == []
+        h = 1.09 / np.sqrt(3.0)
+        methane = np.array([[0, 0, 0], [h, h, h], [h, -h, -h], [-h, h, -h], [-h, -h, h]])
+        assert h_tops(methane, ["C", "H", "H", "H", "H"]) == []
+
+    def test_finds_the_methyl_of_toluene(self) -> None:
+        x, s = ring({0: 45.0})
+        assert h_tops(x, s) == [(6, (7, 8, 9))]
+
+    @pytest.mark.parametrize(
+        ("halogen", "bond"), [("F", 1.35), ("Cl", 1.77), ("Br", 1.94), ("I", 2.14)]
+    )
+    def test_finds_a_methyl_beside_a_trihalomethyl(self, halogen: str, bond: float) -> None:
+        # Fluorine two bonds from the methyl carbon, 2.35 Angstrom off, is not bonded to it.
+        x, s = trihalo_ethane(halogen, bond)
+        assert h_tops(x, s) == [(0, (2, 3, 4))]
+
+
+class TestCollapsedTops:
+    @pytest.mark.parametrize("phase", [0.0, 45.0, 90.0])
+    def test_toluene_counts_once_however_its_methyl_is_turned(self, phase: float) -> None:
+        x, s = ring({0: phase})
+        assert symmetry_number(x, s, collapse_tops=True) == (1, True)
+
+    def test_a_turned_methyl_makes_toluene_chiral_without_the_collapse(self) -> None:
+        x, s = ring({0: 45.0})
+        assert symmetry_number(x, s) == (1, False)
+        assert conformer_multiplicity(x[None], s)[0] == 2.0
+        assert conformer_multiplicity(x[None], s, collapse_tops=True)[0] == 1.0
+
+    def test_mesitylene_keeps_its_threefold_axis(self) -> None:
+        # The C3 moves every methyl onto another; the C2s each turn one by 180 degrees.
+        x, s = ring({0: 10.0, 2: 50.0, 4: 100.0})
+        assert symmetry_number(x, s) == (1, False)
+        assert symmetry_number(x, s, collapse_tops=True) == (3, True)
+
+    def test_p_xylene_keeps_only_the_axes_that_swap_its_methyls(self) -> None:
+        x, s = ring({0: 20.0, 3: 70.0})
+        assert symmetry_number(x, s, collapse_tops=True) == (2, True)
+
+    def test_a_carboxyl_leaves_one_mirror_plane(self) -> None:
+        # p-Toluic acid: chiral with a methyl hydrogen perpendicular to the ring,
+        # but a turn of the methyl puts one in the ring plane.
+        x, s = ring({0: 0.0}, carboxyl=True)
+        assert symmetry_number(x, s) == (1, False)
+        assert symmetry_number(x, s, collapse_tops=True) == (1, True)
+
+    @pytest.mark.parametrize("phase", [0.0, 17.0])
+    def test_a_top_on_a_line_keeps_its_threefold_turn(self, phase: float) -> None:
+        x, s = acetonitrile(phase)
+        assert symmetry_number(x, s, collapse_tops=True) == (3, True)
+
+    def test_ethane_counts_six_whatever_its_twist(self) -> None:
+        x, s = ethane(0.0, 37.0)
+        assert symmetry_number(x, s, collapse_tops=True) == (6, True)
+
+    def test_methylammonium_is_unchanged(self) -> None:
+        got = symmetry_number(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS, collapse_tops=True)
+        assert got == symmetry_number(METHYLAMMONIUM, METHYLAMMONIUM_SYMBOLS)
+
+    def test_a_molecule_without_tops_is_unchanged(self) -> None:
+        sym, syms = _water()
+        assert symmetry_number(sym, syms, collapse_tops=True) == symmetry_number(sym, syms)
+
+    def test_methyl_turns_deduplicate_only_when_collapsed(self) -> None:
+        # Toluene's two symmetric orientations, 30 degrees apart on its sixfold turn.
+        stack = np.stack([ring({0: phase})[0] for phase in (0.0, 30.0)])
+        symbols = ring({0: 0.0})[1]
+        assert deduplicate(stack, symbols) == [[0], [1]]
+        assert deduplicate(stack, symbols, collapse_tops=True) == [[0, 1]]
+
+    def test_conformers_with_different_tops_are_never_merged(self) -> None:
+        # The second has one methyl hydrogen pulled off, so its carbon is no top.
+        x, s = ring({0: 30.0})
+        pulled = x.copy()
+        pulled[9] = pulled[6] + 1.6 * (pulled[9] - pulled[6]) / np.linalg.norm(
+            pulled[9] - pulled[6]
+        )
+        assert deduplicate(np.stack([x, pulled]), s, collapse_tops=True) == [[0], [1]]

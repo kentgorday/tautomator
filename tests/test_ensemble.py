@@ -26,6 +26,7 @@ from tautomator.types import (
     ExcludedConformer,
     Geometry,
     Microstate,
+    Well,
 )
 
 
@@ -473,6 +474,26 @@ class TestAtomOrderingGuard:
         assert deduplicate_conformers([]) == []
 
 
+class TestRepresentative:
+    WATER = np.array([[0.0, 0.0, 0.0], [0.0, 0.757, 0.586], [0.0, -0.757, 0.586]])
+
+    @pytest.mark.parametrize(("stale_rrho", "kept"), [(False, 1), (True, 0)])
+    def test_a_stale_rrho_term_does_not_pick_the_survivor(
+        self, stale_rrho: bool, kept: int
+    ) -> None:
+        # The second is higher in the optimized energy, lower once a stale RRHO term is added.
+        confs = [
+            Conformer(
+                geometry=Geometry(("O", "H", "H"), self.WATER + d),
+                electronic_energy=e,
+                rrho_correction=r,
+            )
+            for d, e, r in ((0.0, -76.41, 0.02), (1e-4, -76.40, 0.0))
+        ]
+        (survivor,) = deduplicate_conformers(confs, stale_rrho=stale_rrho)
+        assert survivor is confs[kept]
+
+
 # ---------------------------------------------------------------------------
 # Excluded conformers
 # ---------------------------------------------------------------------------
@@ -607,3 +628,57 @@ def test_pruning_keeps_a_microstate_that_only_has_excluded_conformers() -> None:
     assert sum(len(ms.excluded_conformers) for ms in cs.microstates) == 1
     # and it still contributes nothing to the energetics
     assert charge_state_free_energy(cs) == pytest.approx(-76.0)
+
+
+class TestWellRecord:
+    WELL = Well(depth=0.04, symmetric_multiplicity=0.5, broken_multiplicity=1.0, source="fold")
+
+    def test_round_trips(self, tmp_path: Path) -> None:
+        water = Geometry(
+            symbols=("O", "H", "H"),
+            coords=np.array([[0.0, 0.0, 0.0], [0.0, 0.757, 0.586], [0.0, -0.757, 0.586]]),
+        )
+        kept = Conformer(geometry=water, electronic_energy=-76.4, well=self.WELL)
+        plain = Conformer(geometry=water, electronic_energy=-76.3)
+        ms = Microstate(tautomer_id="O", conformers=[kept, plain], smiles="O")
+        ens = Ensemble(
+            input_smiles="O", charge_states={0: ChargeState(charge=0, microstates=[ms])}
+        )
+        back = load_ensemble(serialize_ensemble(ens, tmp_path))
+        a, b = back.charge_states[0].microstates[0].conformers
+        assert a.well == self.WELL and b.well is None
+
+    def test_an_older_file_loads_without_one(self, tmp_path: Path) -> None:
+        water = Geometry(symbols=("O", "H", "H"), coords=np.eye(3))
+        ms = Microstate(
+            tautomer_id="O", conformers=[Conformer(geometry=water, electronic_energy=-76.4)]
+        )
+        ens = Ensemble(
+            input_smiles="O", charge_states={0: ChargeState(charge=0, microstates=[ms])}
+        )
+        path = serialize_ensemble(ens, tmp_path)
+        raw = json.loads(path.read_text())
+        del raw["charge_states"]["0"]["microstates"][0]["conformers"][0]["well"]
+        path.write_text(json.dumps(raw))
+        assert load_ensemble(path).charge_states[0].microstates[0].conformers[0].well is None
+
+    def test_deduplication_keeps_a_duplicates_record(self) -> None:
+        water = np.array([[0.0, 0.0, 0.0], [0.0, 0.757, 0.586], [0.0, -0.757, 0.586]])
+        low = Conformer(geometry=Geometry(("O", "H", "H"), water), electronic_energy=-76.41)
+        high = Conformer(
+            geometry=Geometry(("O", "H", "H"), water + 1e-4),
+            electronic_energy=-76.40,
+            well=self.WELL,
+        )
+        (survivor,) = deduplicate_conformers([high, low])
+        assert survivor is low and survivor.well == self.WELL
+
+    def test_the_survivor_takes_the_lowest_members_record(self) -> None:
+        water = np.array([[0.0, 0.0, 0.0], [0.0, 0.757, 0.586], [0.0, -0.757, 0.586]])
+        other = Well(depth=0.2, symmetric_multiplicity=0.5, broken_multiplicity=1.0, source="fold")
+        confs = [
+            Conformer(geometry=Geometry(("O", "H", "H"), water + d), electronic_energy=e, well=w)
+            for d, e, w in ((0.0, -76.41, None), (1e-4, -76.39, other), (2e-4, -76.40, self.WELL))
+        ]
+        (survivor,) = deduplicate_conformers(confs)
+        assert survivor is confs[0] and survivor.well == self.WELL

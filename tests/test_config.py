@@ -1389,6 +1389,41 @@ class TestPcmRadii:
         np.testing.assert_array_equal(np.delete(default, 1), np.delete(wider, 1))
 
 
+class TestRrhoFloorSetting:
+    def test_fifty_by_default_and_recorded(self, tmp_toml: Callable[[str], Path]) -> None:
+        cfg = load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n'))
+        assert cfg.refinement.rrho_floor == 50.0
+        assert cfg.provenance()["refinement"]["rrho_floor"] == 50.0
+
+    def test_zero_turns_it_off(self, tmp_toml: Callable[[str], Path]) -> None:
+        text = '[molecule]\nsmiles = "CCO"\n[refinement]\nrrho_floor = 0\n'
+        assert load_config(tmp_toml(text)).refinement.rrho_floor == 0
+
+    @pytest.mark.parametrize("value", ["-5", "true", "500", '"50"'])
+    def test_refuses_anything_but_a_frequency(
+        self, tmp_toml: Callable[[str], Path], value: str
+    ) -> None:
+        text = f'[molecule]\nsmiles = "CCO"\n[refinement]\nrrho_floor = {value}\n'
+        with pytest.raises(ValueError, match="rrho_floor must be a frequency"):
+            load_config(tmp_toml(text))
+
+
+class TestCollapseHTopsSetting:
+    def test_on_by_default_and_recorded(self, tmp_toml: Callable[[str], Path]) -> None:
+        cfg = load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n'))
+        assert cfg.refinement.collapse_h_tops is True
+        assert cfg.provenance()["refinement"]["collapse_h_tops"] is True
+
+    def test_can_be_turned_off(self, tmp_toml: Callable[[str], Path]) -> None:
+        text = '[molecule]\nsmiles = "CCO"\n[refinement]\ncollapse_h_tops = false\n'
+        assert load_config(tmp_toml(text)).refinement.collapse_h_tops is False
+
+    def test_refuses_anything_but_a_boolean(self, tmp_toml: Callable[[str], Path]) -> None:
+        text = '[molecule]\nsmiles = "CCO"\n[refinement]\ncollapse_h_tops = 1\n'
+        with pytest.raises(ValueError, match="collapse_h_tops must be true or false"):
+            load_config(tmp_toml(text))
+
+
 class TestNudgeSetting:
     def test_on_by_default_and_recorded(self, tmp_toml: Callable[[str], Path]) -> None:
         cfg = load_config(tmp_toml('[molecule]\nsmiles = "CCO"\n'))

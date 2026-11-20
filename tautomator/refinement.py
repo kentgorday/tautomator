@@ -21,17 +21,25 @@ import numpy as np
 
 from tautomator import xtb_runner
 from tautomator.config import DEFAULT_MEMORY_GB, DROP_CAVITIES, RefinementConfig
-from tautomator.conformer_symmetry import symmetry_number
+from tautomator.conformer_symmetry import conformer_multiplicity, symmetry_number
 from tautomator.ensemble import (
     HARTREE_TO_KCAL,
     _effective_energy,
     deduplicate_charge_state,
     filter_charge_state_by_energy,
 )
-from tautomator.nudge import fold, nudge, settle
+from tautomator.nudge import fold_into, nudge, settle
 from tautomator.protomer_geometry import repair_migrated_conformers
 from tautomator.thermo import quasi_rrho_free_energy
-from tautomator.types import ChargeState, Ensemble, ExcludedConformer, ExclusionReason, Geometry
+from tautomator.types import (
+    ChargeState,
+    Ensemble,
+    ExcludedConformer,
+    ExclusionReason,
+    Geometry,
+    Microstate,
+    Well,
+)
 
 log = logging.getLogger(__name__)
 
@@ -105,10 +113,10 @@ def refine(
             log.info(f"  q={cs.charge}: {summary}")
 
         # Fold before deduplicating.  A shallow off-symmetric well can lie near
-        # enough to its symmetric shape to deduplicate with it and still count
-        # as chiral, and deduplication would keep whichever of the two the
-        # stale RRHO below favours.
-        if config.nudge and (folded := _fold_shallow_wells(cs)):
+        # enough to its symmetric shape to deduplicate with it, and
+        # deduplication would keep the well, the lower of the two, and count
+        # it as chiral.
+        if config.nudge and (folded := _fold_shallow_wells(cs, config.collapse_h_tops)):
             log.info(
                 f"  q={cs.charge}: {folded} shallow off-symmetric well(s) folded into the "
                 "symmetric conformer beside them"
@@ -118,10 +126,12 @@ def refine(
         # relaxes distinct sampled conformers onto the same minimum, and onto
         # mirror-image pairs; each of those would otherwise cost a second
         # Hessian and then contribute twice to the partition function.
-        # The free energy used to pick each group's representative still holds
-        # sampling's xTB-geometry RRHO alongside the new terms, which is fine:
-        # it only breaks ties between near-identical structures.
-        before, after = deduplicate_charge_state(cs)
+        # With collapsed tops a methyl's hilltop joins its minimum here.  Each
+        # group's representative is picked on the optimized energy alone, since
+        # the RRHO terms are still sampling's (ensemble.deduplicate_conformers).
+        before, after = deduplicate_charge_state(
+            cs, collapse_tops=config.collapse_h_tops, stale_rrho=True
+        )
         if after < before:
             log.info(f"  q={cs.charge}: {before} conformer(s) -> {after} distinct state(s)")
 
@@ -140,7 +150,19 @@ def refine(
     return ensemble
 
 
-def _fold_shallow_wells(cs: ChargeState) -> int:
+def _multiplicity(ms: Microstate, coords: np.ndarray, collapse_tops: bool) -> float:
+    """The multiplicity of one geometry of ``ms``, as deduplication will count it."""
+    return float(
+        conformer_multiplicity(
+            np.asarray(coords, dtype=np.float64)[None],
+            list(ms.conformers[0].geometry.symbols),
+            includes_enantiomer=ms.includes_enantiomer,
+            collapse_tops=collapse_tops,
+        )[0]
+    )
+
+
+def _fold_shallow_wells(cs: ChargeState, collapse_tops: bool) -> int:
     """Drop each conformer that `nudge.fold` joins to a symmetric one; return how many.
 
     Runs before deduplication, so the symmetries are taken from the optimized
@@ -148,7 +170,10 @@ def _fold_shallow_wells(cs: ChargeState) -> int:
     They only rank the conformers, so the duplicates still in the list do no
     harm.  Compares the energies the optimizations minimized: electronic plus
     solvation where the geometry was optimized in solvent, electronic alone
-    otherwise.
+    otherwise.  ``collapse_tops`` as deduplication will use it, so that a
+    symmetric conformer whose methyl stopped turned off the mirror still counts
+    as symmetric here.  The symmetric conformer kept gets a `Well` for the
+    lowest one folded into it, unless settle already gave it one.
     """
     folded = 0
     for ms in cs.microstates:
@@ -158,17 +183,24 @@ def _fold_shallow_wells(cs: ChargeState) -> int:
             continue
         coords = [np.asarray(c.geometry.coords, dtype=np.float64) for c in ms.conformers]
         symbols = list(ms.conformers[0].geometry.symbols)
-        keep = fold(
-            coords,
-            [
-                (cast(float, c.electronic_energy) + (c.solvation_energy or 0.0)) * HARTREE_TO_KCAL
-                for c in ms.conformers
-            ],
-            [symmetry_number(x, symbols) for x in coords],
-            symbols,
-        )
-        folded += len(ms.conformers) - len(keep)
-        ms.conformers = [ms.conformers[k] for k in keep]
+        energies = [
+            (cast(float, c.electronic_energy) + (c.solvation_energy or 0.0)) * HARTREE_TO_KCAL
+            for c in ms.conformers
+        ]
+        symmetries = [symmetry_number(x, symbols, collapse_tops=collapse_tops) for x in coords]
+        into = fold_into(coords, energies, symmetries, symbols, collapse_tops)
+        for j in sorted(set(into.values())):
+            host = ms.conformers[j]
+            if host.well is None:
+                i = min((i for i, k in into.items() if k == j), key=lambda i: energies[i])
+                host.well = Well(
+                    depth=energies[j] - energies[i],
+                    symmetric_multiplicity=_multiplicity(ms, coords[j], collapse_tops),
+                    broken_multiplicity=_multiplicity(ms, coords[i], collapse_tops),
+                    source="fold",
+                )
+        folded += len(into)
+        ms.conformers = [c for k, c in enumerate(ms.conformers) if k not in into]
     return folded
 
 
@@ -268,6 +300,15 @@ def _optimize_charge_state(
                             f"symmetry; the symmetric shape is {abs(settled.depth):.3f} kcal/mol "
                             f"{side}, {kept}"
                         )
+                        collapse = config.collapse_h_tops
+                        conf.well = Well(
+                            depth=settled.depth,
+                            symmetric_multiplicity=_multiplicity(
+                                ms, settled.geometry.coords, collapse
+                            ),
+                            broken_multiplicity=_multiplicity(ms, opt_geom.coords, collapse),
+                            source="settle",
+                        )
                         if settled.replaces:
                             opt_geom, opt_energy = settled.geometry, settled.energy
                             converged = True  # settle keeps only a converged shape
@@ -357,7 +398,7 @@ def _add_rrho(
                         threads=threads,
                         memory_gb=memory_gb,
                     )
-                conf.rrho_correction = quasi_rrho_free_energy(freqs)
+                conf.rrho_correction = quasi_rrho_free_energy(freqs, floor=config.rrho_floor)
                 surviving.append(conf)
             except Exception as e:
                 # Previously the conformer was KEPT with rrho_correction unset.

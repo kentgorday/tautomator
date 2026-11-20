@@ -103,3 +103,20 @@ class TestFrequencyScaling:
         assert g_ref != g_zpve_only
         assert g_ref != g_thermal_only
         assert g_zpve_only != g_thermal_only
+
+
+class TestFrequencyFloor:
+    def test_a_softer_mode_counts_as_the_floor(self) -> None:
+        assert quasi_rrho_free_energy([10.0, 1500.0], floor=50.0) == quasi_rrho_free_energy(
+            [50.0, 1500.0]
+        )
+
+    def test_an_imaginary_mode_is_floored_by_its_magnitude(self) -> None:
+        assert quasi_rrho_free_energy([-20.0], floor=50.0) == quasi_rrho_free_energy([50.0])
+        assert quasi_rrho_free_energy([-80.0], floor=50.0) == quasi_rrho_free_energy([80.0])
+
+    def test_stiffer_modes_and_no_floor_are_untouched(self) -> None:
+        assert quasi_rrho_free_energy([60.0, 900.0], floor=50.0) == quasi_rrho_free_energy(
+            [60.0, 900.0]
+        )
+        assert quasi_rrho_free_energy([10.0]) != quasi_rrho_free_energy([50.0])

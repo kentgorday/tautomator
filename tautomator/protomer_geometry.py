@@ -950,8 +950,13 @@ def _repair_labelled(cs: ChargeState, stage: ExclusionStage) -> MigrationReport:
 
     for pos, ms in enumerate(cs.microstates):
         ms.conformers = keep[pos]
-    for target, _source, conf, laid_out in moves:
+    for target, source, conf, laid_out in moves:
         conf.geometry = laid_out
+        if (
+            cs.microstates[target].includes_enantiomer
+            != cs.microstates[source].includes_enantiomer
+        ):
+            conf.well = None  # its counts were taken under the old label's enantiomer rule
         cs.microstates[target].conformers.append(conf)
 
     return report

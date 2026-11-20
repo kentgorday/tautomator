@@ -16,9 +16,11 @@ import pytest
 from tautomator import refinement, xtb_runner
 from tautomator.config import RefinementConfig
 from tautomator.conformer_symmetry import symmetry_number
-from tautomator.ensemble import HARTREE_TO_KCAL
+from tautomator.ensemble import HARTREE_TO_KCAL, deduplicate_charge_state
 from tautomator.nudge import SETTLE, Nudge, Settled
-from tautomator.types import ChargeState, Conformer, Ensemble, Geometry, Microstate
+from tautomator.thermo import quasi_rrho_free_energy
+from tautomator.types import ChargeState, Conformer, Ensemble, Geometry, Microstate, Well
+from tests.top_cases import methanol, ring
 
 FREQS = [1200.0, 1800.0, 3000.0]
 
@@ -363,7 +365,9 @@ class TestNudgeBeforeOptimizing:
     """A symmetric conformer is optimized from its nudged geometry (tautomator.nudge)."""
 
     @staticmethod
-    def cfg(nudge: bool = True, solvation: str = "none") -> RefinementConfig:
+    def cfg(
+        nudge: bool = True, solvation: str = "none", collapse: bool = True
+    ) -> RefinementConfig:
         return RefinementConfig(
             method="wB97X-3c",
             basis="vDZP",
@@ -371,6 +375,7 @@ class TestNudgeBeforeOptimizing:
             rrho="refinement",
             ewin=100.0,
             nudge=nudge,
+            collapse_h_tops=collapse,
             engine="pyscf",
         )
 
@@ -546,6 +551,14 @@ class TestNudgeBeforeOptimizing:
         confs = out.charge_states[0].microstates[0].conformers
         assert len(confs) == kept
         assert np.allclose(confs[0].geometry.coords, geom(0.0).coords)
+        # The symmetric conformer (C2v, 1/2) records the stretched well (Cs, 1) it stands for.
+        folded = Well(
+            depth=pytest.approx(below),  # type: ignore[arg-type]
+            symmetric_multiplicity=0.5,
+            broken_multiplicity=1.0,
+            source="fold",
+        )
+        assert confs[0].well == (folded if kept == 1 else None)
 
     @pytest.mark.parametrize(("nudge", "multiplicity"), [(True, 0.5), (False, 1.0)])
     def test_folds_before_deduplicating(
@@ -638,3 +651,112 @@ class TestNudgeBeforeOptimizing:
         monkeypatch.setattr(refinement, "settle", never)
         patch_drivers(FakeDriver(opt=[-76.40]))
         refinement.refine(ensemble_of([-76.40]), self.cfg(), driver="pyscf")
+
+
+class TestWellRecord:
+    """A settled conformer records the comparison, whichever shape it kept."""
+
+    @staticmethod
+    def lopsided_nudge(g: Geometry, charge: int, *, solvent: str | None, **kw: Any) -> Any:
+        # Longer on one side: Cs, against the sampled C2v.
+        moved = g.coords.copy()
+        moved[1, 1] += 0.4
+        return Geometry(symbols=g.symbols, coords=moved), Nudge(
+            frequency=24.0,
+            symmetric_part=0.0,
+            operations=(((0, 2, 1), False),),
+            symmetry=symmetry_number(g.coords, list(g.symbols)),
+        )
+
+    @pytest.mark.parametrize(("above", "replaced"), [(0.03, True), (0.2, False)])
+    def test_settle_records_the_depth_and_both_counts(
+        self, patch_drivers: Any, monkeypatch: pytest.MonkeyPatch, above: float, replaced: bool
+    ) -> None:
+        e = -76.40
+        driver = FakeDriver(opt=[e, e + above / HARTREE_TO_KCAL])
+        patch_drivers(driver)
+        monkeypatch.setattr(refinement, "nudge", self.lopsided_nudge)
+        shape = geom(0.0)
+
+        def fake_settle(done: Nudge, g: Geometry, energy: float, optimize: Any) -> Settled:
+            relaxed, at, _ = optimize(shape)
+            return Settled(relaxed, at, (at - energy) * HARTREE_TO_KCAL)
+
+        monkeypatch.setattr(refinement, "settle", fake_settle)
+        out = refinement.refine(ensemble_of([e]), TestNudgeBeforeOptimizing.cfg(), driver="pyscf")
+        (conf,) = out.charge_states[0].microstates[0].conformers
+        assert (conf.geometry is shape) == replaced
+        assert conf.well == Well(
+            depth=pytest.approx(above),  # type: ignore[arg-type]
+            symmetric_multiplicity=0.5,
+            broken_multiplicity=1.0,
+            source="settle",
+        )
+        assert conf.multiplicity == (0.5 if replaced else 1.0)
+
+
+class TestCollapsedTops:
+    """A methyl's staggered and eclipsed turns are one state once its tops are collapsed."""
+
+    @pytest.mark.parametrize("collapse", [True, False])
+    def test_a_methyls_two_turns_merge_into_the_lower(
+        self, patch_drivers: Any, collapse: bool
+    ) -> None:
+        # The eclipsed turn is 1 kcal/mol higher, but sampling's stale RRHO
+        # would make it the lower free energy; the optimized energy decides.
+        e = -115.0
+        ms = Microstate(
+            tautomer_id="CO",
+            conformers=[
+                Conformer(
+                    geometry=Geometry(symbols=tuple(methanol(p)[1]), coords=methanol(p)[0]),
+                    rrho_correction=r,
+                )
+                for p, r in ((90.0, 0.010), (30.0, 0.0))
+            ],
+            smiles="CO",
+        )
+        ens = Ensemble(input_smiles="CO")
+        ens.charge_states[0] = ChargeState(charge=0, microstates=[ms])
+        patch_drivers(FakeDriver(opt=[e, e + 1.0 / HARTREE_TO_KCAL]))
+        out = refinement.refine(
+            ens, TestNudgeBeforeOptimizing.cfg(collapse=collapse), driver="pyscf"
+        )
+        confs = out.charge_states[0].microstates[0].conformers
+        assert len(confs) == (1 if collapse else 2)
+        assert confs[0].electronic_energy == pytest.approx(e)
+
+    def test_fold_sees_the_symmetric_shape_through_a_turned_methyl(self) -> None:
+        # p-Toluic acid, planar with its methyl turned 15 degrees off the mirror,
+        # and its well, the carboxyl twisted 10 degrees, 0.03 kcal/mol lower.
+        # Taken uncollapsed both are chiral, so fold left the pair alone and
+        # deduplication kept the well, counted as a mirror pair.
+        e = -459.0
+        confs = [
+            Conformer(geometry=Geometry(tuple(s), x), electronic_energy=e - d / HARTREE_TO_KCAL)
+            for (x, s), d in (
+                (ring({0: 105.0}, carboxyl=True), 0.0),
+                (ring({0: 90.0}, carboxyl=True, twist=10.0), 0.03),
+            )
+        ]
+        cs = ChargeState(charge=0, microstates=[Microstate(tautomer_id="acid", conformers=confs)])
+        assert refinement._fold_shallow_wells(cs, collapse_tops=True) == 1
+        deduplicate_charge_state(cs, collapse_tops=True, stale_rrho=True)
+        (kept,) = cs.microstates[0].conformers
+        assert kept is confs[0] and kept.multiplicity == 1.0
+        assert kept.well is not None and kept.well.depth == pytest.approx(0.03)
+
+
+class TestRrhoFloor:
+    @pytest.mark.parametrize(("floor", "counted"), [(50.0, 50.0), (0.0, 5.0)])
+    def test_a_soft_mode_counts_as_the_floor(
+        self, patch_drivers: Any, monkeypatch: pytest.MonkeyPatch, floor: float, counted: float
+    ) -> None:
+        driver = FakeDriver(opt=[-76.40])
+        patch_drivers(driver)
+        monkeypatch.setattr(driver, "frequencies", lambda *a, **kw: [5.0, 1200.0])
+        cfg = TestNudgeBeforeOptimizing.cfg()
+        cfg.rrho_floor = floor
+        out = refinement.refine(ensemble_of([-76.40]), cfg, driver="pyscf")
+        (conf,) = out.charge_states[0].microstates[0].conformers
+        assert conf.rrho_correction == quasi_rrho_free_energy([counted, 1200.0])

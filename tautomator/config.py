@@ -38,6 +38,8 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from tautomator.thermo import FREQUENCY_FLOOR
+
 # Per-QM-job memory ceiling, shared by both backends so a given config means
 # the same thing on either one (their native defaults are Psi4's 500 MiB and
 # PySCF's 4 GB).  A solvated job gives PCM_STORE_FRACTION of it to the PCM's
@@ -404,12 +406,20 @@ class RefinementConfig:
     # reason "gas_prefilter".
     solvation_prefilter_ewin: float | None = None
     rrho: Rrho = "xtb"
+    # Frequencies softer than this (cm-1, by magnitude) count as this in the RRHO
+    # term; 0 for none.  The softest xTB --bhess modes are numerical noise
+    # (thermo.FREQUENCY_FLOOR).
+    rrho_floor: float = FREQUENCY_FLOOR
     ewin: float = 8.0  # energy window (kcal/mol) for filtering after refinement
     pcm_hydrogen_radius: float = 1.1  # PCM cavity radius (Angstrom) for hydrogen
     # Move each symmetric conformer a little along its soft symmetry-breaking
     # GFN2 modes before optimizing it, so a symmetric saddle cannot trap the
     # optimizer (tautomator.nudge).
     nudge: bool = True
+    # Count each methyl-type top (CH3, NH3+) as turning freely, in deduplication
+    # and in each conformer's multiplicity (conformer_symmetry.h_tops), so that
+    # where an optimizer leaves a nearly free methyl does not change the count.
+    collapse_h_tops: bool = True
     # Derived: "orbmol", or the [compute] driver for DFT refinement.
     engine: str = "pyscf"
 
@@ -466,9 +476,11 @@ class PkaConfig:
                 "basis": ref.basis,
                 "solvation": solvation,
                 "rrho": ref.rrho,
+                "rrho_floor": ref.rrho_floor,
                 "ewin": ref.ewin,
                 "solvation_prefilter_ewin": ref.solvation_prefilter_ewin,
                 "nudge": ref.nudge,
+                "collapse_h_tops": ref.collapse_h_tops,
             },
             "scoring": {
                 "driver": self.compute.driver,
@@ -670,9 +682,11 @@ def _build_refinement(
         solvation_basis=raw.get("solvation_basis", _default_basis(solvation_method)),
         solvation_prefilter_ewin=raw.get("solvation_prefilter_ewin"),
         rrho=raw.get("rrho", "xtb"),
+        rrho_floor=raw.get("rrho_floor", FREQUENCY_FLOOR),
         ewin=raw.get("ewin", 8.0 if solvation != "none" else 10.0),
         pcm_hydrogen_radius=raw.get("pcm_hydrogen_radius", 1.1),
         nudge=raw.get("nudge", True),
+        collapse_h_tops=raw.get("collapse_h_tops", True),
         engine=engine,
     )
 
@@ -699,8 +713,21 @@ def _validate(ref: RefinementConfig, scoring: ScoringConfig, compute: ComputeCon
         raise ValueError(
             f"Unknown [refinement] rrho: {ref.rrho!r} (must be 'xtb' or 'refinement')"
         )
+    if (
+        isinstance(ref.rrho_floor, bool)
+        or not isinstance(ref.rrho_floor, int | float)
+        or not 0 <= ref.rrho_floor <= 200
+    ):
+        raise ValueError(
+            "[refinement] rrho_floor must be a frequency from 0 to 200 cm-1, "
+            f"not {ref.rrho_floor!r}"
+        )
     if not isinstance(ref.nudge, bool):
         raise ValueError(f"[refinement] nudge must be true or false, not {ref.nudge!r}")
+    if not isinstance(ref.collapse_h_tops, bool):
+        raise ValueError(
+            f"[refinement] collapse_h_tops must be true or false, not {ref.collapse_h_tops!r}"
+        )
 
     # Level of theory: the 3c composites carry their basis with them.
     _check_composite("[refinement] method", ref.method, ref.basis, compute.driver)

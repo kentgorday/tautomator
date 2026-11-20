@@ -27,6 +27,7 @@ from tautomator.nudge import (
     Operation,
     _oriented,
     fold,
+    fold_into,
     localize,
     nudge,
     settle,
@@ -34,6 +35,7 @@ from tautomator.nudge import (
     symmetrize,
 )
 from tautomator.types import Geometry
+from tests.top_cases import ring
 
 # Water in the yz plane: C2 about z, mirror planes xz and yz.
 WATER = Geometry(
@@ -474,6 +476,35 @@ class TestFold:
 
     def test_a_shallow_well_joins_the_symmetric_conformer(self) -> None:
         assert self.keep(STRETCHED, SETTLE - 0.03) == [0]
+
+    def test_says_which_conformer_stands_for_each_drop(self) -> None:
+        # The chiral one qualifies for both and goes to the lower; that one is
+        # dropped for the most symmetric, so the chiral one follows it there.
+        further = Geometry(symbols=WATER.symbols, coords=STRETCHED.coords + 0.02)
+        into = fold_into(
+            [np.asarray(g.coords) for g in (WATER, STRETCHED, further)],
+            [0.0, -0.06, -0.04],
+            [(2, True), (1, True), (1, False)],
+            list(WATER.symbols),
+        )
+        assert into == {1: 0, 2: 0}
+
+    @pytest.mark.parametrize(("collapse", "into"), [(True, {1: 0}), (False, {})])
+    def test_a_methyl_turned_another_way_is_no_farther_with_tops_collapsed(
+        self, collapse: bool, into: dict[int, int]
+    ) -> None:
+        # A planar acid and its well, the carboxyl twisted 10 degrees, with one
+        # of two methyls turned 50 degrees the other way: its hydrogens move
+        # 0.87 Angstrom, past the reach, with or without the mirror.
+        shapes = [
+            ring({0: 115.0, 1: 115.0}, carboxyl=True),
+            ring({0: 65.0, 1: 115.0}, carboxyl=True, twist=10.0),
+        ]
+        symbols = shapes[0][1]
+        coords = [x for x, _ in shapes]
+        symmetries = [symmetry_number(x, symbols, collapse_tops=True) for x in coords]
+        assert symmetries == [(1, True), (1, False)]
+        assert fold_into(coords, [0.0, -0.03], symmetries, symbols, collapse) == into
 
     def test_a_deeper_well_stays(self) -> None:
         assert self.keep(STRETCHED, SETTLE + 0.01) == [0, 1]

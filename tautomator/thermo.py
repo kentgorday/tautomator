@@ -28,6 +28,19 @@ AVOGADRO = 6.02214076e23
 # Default cutoff for quasi-RRHO damping (cm⁻¹)
 QRRHO_CUTOFF = 100.0
 
+# The refinement's floor under the frequencies (cm⁻¹, by magnitude): anything
+# softer counts as this.  Below the cutoff qRRHO's free-rotor branch takes its
+# moment of inertia from the frequency, so G moves by RT/2 ln 2 = 0.2 kcal/mol
+# each time a soft mode's frequency halves, and an xTB --bhess mode at a DFT
+# geometry is that soft and that fickle.  Re-run at the same geometries jittered
+# by 0.002 Angstrom (about geomeTRIC's converged step), the lowest conformers of
+# 211 finished MNSol runs moved their RRHO term by more than 0.2 kcal/mol in 15,
+# by up to 0.57; with a 50 cm⁻¹ floor by at most 0.04.  Between gas and
+# solvent, the soft modes' share of each solute's term differed by 0.20
+# kcal/mol rms, 0.08 with the floor.  30 and 40 cm⁻¹ leave up to 0.10 and 0.06
+# of the jitter; 75 and 100 remove no more.
+FREQUENCY_FLOOR = 50.0
+
 # Frequency scaling factors from Kesharwani, Brauer, Martin, J. Phys. Chem. A
 # 2015, 119, 1701.  These correct for the systematic overestimation of
 # calculated harmonic frequencies vs experimental fundamentals.  For modern
@@ -44,6 +57,7 @@ def quasi_rrho_free_energy(
     pressure: float = 101325.0,
     scale_zpve: float = DEFAULT_SCALE_ZPVE,
     scale_thermal: float = DEFAULT_SCALE_THERMAL,
+    floor: float = 0.0,
 ) -> float:
     """Compute the vibrational free energy correction using quasi-RRHO.
 
@@ -69,6 +83,8 @@ def quasi_rrho_free_energy(
             modern functionals with sufficient basis sets).
         scale_thermal: Scale factor for thermal enthalpy and entropy
             contributions (~0.96 for modern functionals).
+        floor: Frequencies softer than this (cm⁻¹, by magnitude) count as
+            this; 0 for none.  See FREQUENCY_FLOOR.
 
     Returns:
         Vibrational free energy correction in Hartree.
@@ -89,6 +105,7 @@ def quasi_rrho_free_energy(
                 f"({abs(freq):.1f} cm⁻¹) for free energy calculation"
             )
             freq = abs(freq)
+        freq = max(freq, floor)
 
         # Scaled frequencies for each contribution
         freq_zpve = freq * scale_zpve

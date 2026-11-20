@@ -32,6 +32,15 @@ from tautomator.config import alpb_name
 from tautomator.types import Geometry
 from tautomator.xyz_io import read_multi_xyz, write_xyz
 
+# xtb input that skips its point-group search, for Hessian runs.  After a
+# Hessian xtb looks for the point group before its thermochemistry, and on a
+# shape near a symmetric one it can find elements of no group it knows: a C2
+# axis and a single mirror plane, for a 3,5-lutidine just off C2v.  xtb 6.7.1
+# then dies with SIGTRAP in its fallback, and the conformer is lost for want of
+# an RRHO term.  Nothing here reads xtb's thermochemistry, only the
+# frequencies, and those do not depend on the search.
+SKIP_POINT_GROUP = "$symmetry\n   maxat=0\n$end\n"
+
 
 def optimize(
     geom: Geometry,
@@ -243,6 +252,8 @@ def _run_hessian(
     try:
         input_xyz = work_dir / "input.xyz"
         write_xyz(geom, input_xyz)
+        xcontrol = work_dir / "xcontrol"
+        xcontrol.write_text(SKIP_POINT_GROUP)
 
         cmd = [
             "xtb",
@@ -252,6 +263,8 @@ def _run_hessian(
             str(gfn),
             "--chrg",
             str(charge),
+            "--input",
+            str(xcontrol),
         ]
         if solvent is not None:
             cmd.extend(["--alpb", alpb_name(solvent)])

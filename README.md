@@ -53,14 +53,31 @@ Hessian for these functionals, so each conformer costs ~6N gradient
 calculations (analytical PCM gradients, through psi4-swig-pcm), usually more
 than the optimization it follows.
 
+Either way, the refinement's RRHO term counts every mode softer than 50 cm⁻¹
+as 50 cm⁻¹ (`refinement.rrho_floor`; 0 turns it off). Below 100 cm⁻¹
+quasi-RRHO's free-rotor branch takes its moment of inertia from the frequency,
+so the term drops by 0.2 kcal/mol each time a soft mode's frequency halves, and
+the softest xTB `--bhess` modes at a DFT geometry are numerical noise. Re-run at
+geometries jittered by 0.002 Å, about an optimizer's converged step, the lowest
+conformers of 211 finished MNSol runs moved their RRHO term by more than 0.2
+kcal/mol in 15, by up to 0.57; with the floor by at most 0.04. Between gas and
+solvent, the soft modes' share of each solute's term differed by 0.20 kcal/mol
+rms, 0.08 with the floor. Sampling's RRHO, which only sets its energy window,
+has no floor.
+
 Scoring never recomputes RRHO; the refinement value carries through.
 
 Sampling and refinement each deduplicate conformers before spending Hessians on
 them: a structure that is another one relabelled, or its mirror image, is
 collapsed and the survivor carries the weight of both. Refinement is where this
 matters most — DFT optimization relaxes a large fraction of distinct sampled
-conformers onto the same minimum. Scoring does not deduplicate, since it does
-not move geometries. See [docs/symmetry.md](docs/symmetry.md).
+conformers onto the same minimum. Refinement also treats each methyl-type top
+(CH3, NH3+) as turning freely (`refinement.collapse_h_tops`, on by default): a
+methyl's turn is nearly free, so two conformers that differ only in where an
+optimizer left it are one state, kept at the lower optimized energy, and a
+methyl turned off a mirror plane does not make a conformer chiral. Scoring does
+not deduplicate, since it does not move geometries. See
+[docs/symmetry.md](docs/symmetry.md).
 
 Before refinement optimizes a conformer that has a symmetry operation (a flat
 NH2, coplanar rings, a CCl3 or methyl with an atom in a mirror plane, a

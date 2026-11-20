@@ -51,6 +51,29 @@ class Geometry:
         return 1 + self.n_electrons(charge) % 2
 
 
+@dataclass(frozen=True)
+class Well:
+    """The double-well comparison a refined conformer came through (tautomator.nudge).
+
+    `settle` and `fold` compare a well that broke a symmetry with the
+    symmetric shape at its middle, and keep one conformer for the two: the
+    symmetric shape when the well is less than SETTLE deep, counted as that
+    shape, and otherwise the well, counted as a conformer of its own (a mirror
+    pair, usually).  That rounds a count that runs smoothly from one to the
+    other, the quartic double well's n*(depth/kT) of docs/nudge.md.  The
+    record keeps what the smooth count needs, so it can be applied to a
+    finished run: ``symmetric_multiplicity * n*`` in place of whichever
+    multiplicity the kept conformer has.  Both multiplicities are counted as
+    the run counts them, so a well that breaks only a methyl's symmetry counts
+    the same either way when tops are collapsed, and needs nothing.
+    """
+
+    depth: float  # kcal/mol the well lies below its symmetric shape; negative when above
+    symmetric_multiplicity: float  # what the symmetric shape counts
+    broken_multiplicity: float  # what the well counts as a conformer of its own
+    source: Literal["settle", "fold"]
+
+
 @dataclass
 class Conformer:
     """A molecular conformer with decomposed energy components.
@@ -67,6 +90,9 @@ class Conformer:
       - multiplicity: how many physical states this conformer stands for,
         divided by its own rotational symmetry number. Recomputed after every
         deduplication pass, since both terms depend on the geometry.
+      - well: set at refinement when the conformer came through a comparison
+        of an off-symmetric well with the symmetric shape beside it, settle's
+        or fold's, whichever of the two it kept; see `Well`.
 
     The free_energy property sums all non-None components for Boltzmann
     weighting and partition function calculations.
@@ -79,6 +105,7 @@ class Conformer:
     weight: float | None = None  # Boltzmann weight, normalized across the charge state
     refinement_converged: bool | None = None  # None before refinement; bool after
     multiplicity: float = 1.0  # n_states / sigma; see tautomator.conformer_symmetry
+    well: Well | None = None
 
     @property
     def free_energy(self) -> float:

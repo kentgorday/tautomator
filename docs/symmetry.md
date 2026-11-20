@@ -119,10 +119,78 @@ takes `includes_enantiomer` precisely so it can stand down.
 
 ---
 
+## Methyl-type tops
+
+A methyl's turn is nearly free. Toluene's sixfold barrier is 0.012 kcal/mol at
+wB97X-3c, well under DFT grid noise, so an optimizer stops wherever it happens
+to: with a hydrogen in the ring plane, perpendicular to it, or anywhere between.
+Judged by geometry, the first two are achiral and the third is chiral, and two
+of them are distinct conformers. So toluene counted 1 in water and gas and 2 in
+octanol and hexadecane, p-toluic acid 2 against 1 for p-toluate (0.3 pKa
+units), and p-toluate itself 1 or 2 depending on whether its two sampled
+conformers stopped at the same turn. None of these has a well to find: the
+nudge and settle cannot fix them.
+
+So refinement treats each **methyl-type top** as turning freely
+(`[refinement] collapse_h_tops`, on by default). A top is an atom with four
+neighbours, three of them hydrogens bonded to nothing else and the fourth not a
+hydrogen: CH3, NH3+, SiH3 (`conformer_symmetry.h_tops`). Its three hydrogens
+are replaced by one pseudo-atom at their centroid, which lies on the top's axis
+and so no longer says how the top is turned. Then:
+
+- **Chirality** is decided on the collapsed structure: achiral if some turn of
+  the tops makes the conformer so.
+- **Deduplication** compares collapsed structures, so a methyl's staggered
+  minimum and eclipsed hilltop, or two stopping points on a free turn, are one
+  state. Such a group can span a kcal/mol or two, so its representative is the
+  one lowest in the energy the geometries were optimized on (electronic plus
+  solvation), not in the free energy, whose RRHO term at that point is still
+  sampling's.
+- **sigma** is the largest group of the collapsed structure's rotations that
+  needs no particular turn of any top: every rotation that leaves a top in
+  place must turn it by a multiple of 120 degrees, so that hydrogens land on
+  hydrogens. A rotation that carries one top onto another is fine, since the
+  tops can be turned to match.
+
+The last rule is what keeps sigma right, and it is easy to get wrong. The
+collapsed structure's own sigma is not it: collapsed toluene is C2v, but its C2
+turns the methyl by 180 degrees, so toluene's sigma stays 1. Collapsed CH3-C#N
+is a line, which the relabelling search sees as having no rotation at all, but
+the threefold turn about it is a symmetry of the real molecule, so a collapsed
+structure on a line gets three times the sigma found.
+
+| Conformer | sigma | achiral | multiplicity |
+|---|---|---|---|
+| toluene, methyl turned any way | 1 | yes | 1 |
+| mesitylene, methyls turned any way | 3 | yes | 1/3 |
+| p-xylene | 2 | yes | 1/2 |
+| acetone, acetonitrile | 2, 3 | yes | 1/2, 1/3 |
+| ethane, twisted or not | 6 | yes | 1/6 |
+| neopentane, tetramethylammonium | 12 | yes | 1/12 |
+
+Collapse is unconditional for these tops. It would be wrong for a methyl
+wedged into a genuinely twisted double well, which would count 1 where it
+should count 2. No such case has turned up: among the crowded methyls and
+ammoniums scanned at wB97X-3c (2,6-disubstituted toluenes and anilinium, peri
+methyls in naphthalenes, the N-methyl of N-methylpivalamide), none had one.
+Bulkier tops (CF3, CCl3, tBu, SiMe3) are not collapsed, because some of them do
+twist: pinacolone's tert-butyl sits 15 degrees off its mirror plane, 0.28
+kcal/mol below it, in every phase.
+
+Sampling does not collapse tops. GFN2 and wB97X-3c disagree about which turn
+of a methyl is the minimum in 2-methylpyridine, 2,6-lutidine and m-cresol, so
+merging at sampling would keep GFN2's choice, which is the DFT hilltop. The
+count at sampling only moves the energy window: by RT ln 2 for a conformer that
+a twisted methyl makes chiral, and by more where the tops also carry the
+symmetry number (a mesitylene with its methyls turned off the threefold axis
+counts 2 instead of 1/3, RT ln 6 = 1.06 kcal/mol).
+
+---
+
 ## Where it runs
 
-`ensemble.deduplicate_charge_state(cs, ethr_kcal=None)` is the single entry
-point. It deduplicates **within each microstate** — conformers of different
+`ensemble.deduplicate_charge_state(cs, ethr_kcal=None, collapse_tops=False,
+stale_rrho=False)` is the single entry point. It deduplicates **within each microstate** — conformers of different
 microstates are different species and are never compared — then recomputes every
 survivor's multiplicity.
 
@@ -137,7 +205,12 @@ collapses duplicates, then gives only the survivors a Hessian. DFT optimization
 routinely relaxes distinct sampled conformers onto one minimum — around 40% of
 the ensemble — so deduplicating before the Hessians avoids paying for the same
 frequencies twice. No energy criterion is used here; optimized duplicates agree
-to well under 0.01 kcal/mol anyway. With `refinement.nudge` on (the default), a
+to well under 0.01 kcal/mol anyway. With `refinement.collapse_h_tops` on (the
+default), methyl-type tops turn freely in both the comparison and the count
+(see above). A group's representative is picked on its optimized energy
+(`stale_rrho`), since the RRHO terms are still sampling's, taken at other
+geometries.
+With `refinement.nudge` on (the default), a
 symmetric conformer is nudged off its symmetry before it is optimized, so it is
 not left on a symmetric saddle, and before deduplication a shallow
 off-symmetric well beside a more symmetric conformer is folded into it, so the
@@ -216,7 +289,8 @@ deduplicating a 24-conformer ensemble of it takes 0.1 s.
 
 ## Assumptions and limits
 
-- **No molecular graph is used or perceived.** A permutation preserving every
+- **No molecular graph is used or perceived**, except which hydrogens sit on
+  which atom, to find methyl-type tops. A permutation preserving every
   interatomic distance necessarily preserves connectivity, since bonds are short
   distances. This matters because bond orders and formal charges cannot be
   perceived reliably for charged, tautomeric species, and because a stored SMILES

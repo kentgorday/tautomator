@@ -40,12 +40,16 @@ It is on by default (`[refinement] nudge = true`).
    own, in the sense of step 2), and within `SETTLE_REACH / 2` of it, is
    dropped. Standing for fewer states is not enough: a threefold propeller
    (sigma 3, chiral) counts fewer than a conformer with one mirror, but has
-   none of its symmetry. This catches a shallow well that two starts reached and
-   settled differently, and such pairs that sampling handed over unnudged. It
+   none of its symmetry. With `collapse_h_tops` on, the symmetries are taken
+   with methyl-type tops collapsed, as deduplication takes them, so a symmetric
+   shape whose methyl stopped turned off the mirror still counts as symmetric;
+   a pair is also near when it is within reach collapsed. This catches a shallow well that two starts
+   reached and settled differently, and such pairs that sampling handed over
+   unnudged. It
    runs before deduplication because a well this shallow can lie near enough to
    its symmetric shape to deduplicate with it and still count as chiral, and
-   deduplication keeps whichever of the two has the lower free energy, which at
-   that point still holds sampling's RRHO. p-Toluate in water did this: one
+   deduplication keeps whichever of the two is lower, which can be the less
+   symmetric one. p-Toluate in water did this: one
    start settled onto the symmetric shape, a second (its carboxylate turned by
    90°, too far to settle) stopped 0.009 kcal/mol above it with the methyl
    twisted, and deduplication kept the second at twice the count.
@@ -111,6 +115,15 @@ overshoots 2 (2.25 at β ≈ 2) before it returns to it; hence the limits. At 29
 kcal/mol, which `SETTLE` rounds to 0.075 (n* = 1.42 there). Below that, one
 symmetric well is the nearer of the two whole counts, and above it the mirror
 pair is. Either way the count is off by at most RT ln √2 = 0.21 kcal/mol.
+
+The rounding is kept apart from the comparison. Each conformer that settle or
+fold kept for a well and its symmetric shape records the comparison in
+`ensemble.json` (`Conformer.well`): the depth, what the symmetric shape counts,
+what the well counts as a conformer of its own, and which step made it. The
+smooth count, the symmetric shape's multiplicity times n*(depth/kT), can then
+be applied to a finished run from these alone. Both multiplicities are counted
+as the run counts them, so with methyl-type tops collapsed a well that only
+turns a methyl counts the same either way and needs nothing.
 
 ## Measurements
 
