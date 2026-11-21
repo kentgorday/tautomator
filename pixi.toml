@@ -13,8 +13,8 @@ version = "0.1.0"
 # which pixi still treats as a preview feature (0.82).
 preview = ["pixi-build"]
 # psi4-swig-pcm builds with pixi-build-python >= 0.8, whose build API pixi
-# accepts from 0.71.
-requires-pixi = ">=0.71.0"
+# accepts from 0.71, and pins its Psi4 with pin-compatible, which needs 0.77.
+requires-pixi = ">=0.77.0"
 
 # The macOS that source builds (psi4-swig-pcm, MOIST) target.  pixi-build takes it from
 # the platform's macOS, which on the 27.2 platform is newer than any conda-forge
@@ -125,15 +125,20 @@ dm-tree = ">=0.1.8"
 # import (7.1 removed functionals that 1.10 builds into its table).
 [feature.psi4.dependencies]
 python = "3.13.*"
-# psi4-swig-pcm is compiled against Psi4's C++ classes and run-exports the Psi4
-# it was built with, which holds this to 1.11.x.
+# psi4-swig-pcm is compiled against Psi4's C++ classes (its host takes 1.11.*,
+# which holds this to 1.11.x) and requires exactly the Psi4 and libint builds it
+# was compiled against.  pixi solves its host environment on its own, newest
+# first, so a new psi4-swig-pcm rev and `pixi lock`, or `pixi update psi4`,
+# rebuilds it against the newest Psi4 build and moves this environment to that
+# build.  To keep an older build, name it in [workspace.build-variants] (for
+# example psi4 = ["1.11 *_3"]); a pin here alone conflicts with the newer host.
 psi4 = ">=1.11,<2"
 # Implicit solvent: psi4_runner's input decks import it.  The same
 # switching/Gaussian PCM as PySCF's, and a host for MOIST's DROP cavities, with
 # analytical gradients and the nonelectrostatic correction (LGPL-3.0, like Psi4,
 # hence a repository of its own).  Built from source by pixi-build, at the commit
 # `rev` names, on its main.
-psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "a906ed10783f494b025b89607bf45c57ef3c5349" }
+psi4-swig-pcm = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "b1c36973b93abfa3d407dde220fb808e78ef4708" }
 # Psi4's optimizer (optking) converts units through qcelemental's pint registry, which
 # qcelemental 0.51.2 and 0.51.3 cannot build under pint 0.26.2 (pint rejects their
 # "J^{-2}"): with either, psi4.optimize fails.  0.51.4 works with pint 0.26.1 and 0.26.2.
@@ -156,7 +161,7 @@ gcp-correction = ">=2.3.2,<3"
 # for default and psi4, which get the same build, and once more for accelerate and
 # psi4-accelerate, on their own platform.
 [feature.moist.dependencies]
-moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "a906ed10783f494b025b89607bf45c57ef3c5349", subdirectory = "packages/moist" }
+moist = { git = "https://github.com/kentgorday/psi4-swig-pcm.git", rev = "b1c36973b93abfa3d407dde220fb808e78ef4708", subdirectory = "packages/moist" }
 
 # The platforms of the default and psi4 environments: all but the macOS 27.2 one.  An
 # environment gets the platforms its features have in common, and a feature that names
